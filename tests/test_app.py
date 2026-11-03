@@ -166,14 +166,11 @@ def test_unexpected_error_is_shown_not_swallowed(monkeypatch, dialogs, tmp_path)
     assert "RuntimeError: boom" in dialogs["error"][0][1]
 
 
-def test_command_line_process_and_approve(tmp_path, capsys):
+def test_command_line_process(tmp_path, capsys):
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)
     assert app.main([str(source), "--output-dir", str(tmp_path / "out")]) == 0
     assert '"employees": 3' in capsys.readouterr().out
-    folder = next((tmp_path / "out").iterdir())
-    assert app.main(["--approve", str(folder)]) == 0
-    assert '"final": false' in capsys.readouterr().out
 
 
 def test_command_line_reports_failure(tmp_path, capsys):

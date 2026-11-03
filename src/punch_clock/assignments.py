@@ -12,14 +12,12 @@ from typing import Mapping, Optional
 
 from punch_clock.jibble_export import Employee, WeeklyExport
 
-MISSING_SUPERVISOR_KEY = "accounting"
 MISSING_SUPERVISOR_TITLE = "Missing supervisor"
 LONGEST_DEPARTMENTS_IN_FILE_NAME = 60  # someone covering many departments mustn't hit Excel's path limit
 
 
 @dataclass(frozen=True)
 class ReviewGroup:
-    key: str  # stable identity stored inside the review file
     title: str
     supervisor: Optional[str]
     employees: tuple[Employee, ...]
@@ -37,8 +35,6 @@ def department_names(export: WeeklyExport) -> list[str]:
 
 def review_groups(export: WeeklyExport) -> list[ReviewGroup]:
     """One group per supervisor, then the missing-supervisor group if it has anyone."""
-    if export.supervisors is None:
-        return []
     names: dict[str, str] = {}
     members: dict[str, list[Employee]] = {}
     remaining = []
@@ -49,9 +45,9 @@ def review_groups(export: WeeklyExport) -> list[ReviewGroup]:
             members.setdefault(name.casefold(), []).append(employee)
         else:
             remaining.append(employee)
-    groups = [ReviewGroup(f"supervisor:{key}", names[key], names[key], tuple(members[key])) for key in names]
+    groups = [ReviewGroup(names[key], names[key], tuple(members[key])) for key in names]
     if remaining:
-        groups.append(ReviewGroup(MISSING_SUPERVISOR_KEY, MISSING_SUPERVISOR_TITLE, None, tuple(remaining)))
+        groups.append(ReviewGroup(MISSING_SUPERVISOR_TITLE, None, tuple(remaining)))
     return groups
 
 
@@ -60,8 +56,7 @@ def missing_supervisor_codes(export: WeeklyExport) -> set[str]:
 
 
 def departments_without_supervisor(export: WeeklyExport) -> list[str]:
-    supervised = export.supervisors or {}
-    return [name for name in department_names(export) if name.casefold() not in supervised]
+    return [name for name in department_names(export) if name.casefold() not in export.supervisors]
 
 
 def safe_file_name(text: str) -> str:

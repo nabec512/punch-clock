@@ -11,7 +11,7 @@ from typing import Callable, Optional, Sequence
 from punch_clock import __version__, supervisor_list
 from punch_clock.assignments import department_names
 from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, load_export
-from punch_clock.reports import ProcessResult, build_approved, process_export
+from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
 
@@ -205,28 +205,19 @@ def _emit(stream, text: str) -> None:
         print(text, file=stream)
 
 
-def run_command_line(source: Optional[Path], approve: Optional[Path], output_dir: Optional[Path]) -> int:
+def run_command_line(source: Path, output_dir: Optional[Path]) -> int:
     try:
-        if approve:
-            result = build_approved(approve)
-            report = {
-                "pdf": str(result.pdf),
-                "summary": str(result.summary),
-                "final": result.approvals.is_final,
-                "not_reviewed": [a.employee.code for a in result.approvals.not_reviewed],
-            }
-        else:
-            result = process_export(source, output_dir)
-            report = {
-                "folder": str(result.folder),
-                "pdfs": [str(pdf) for pdf in result.pdfs],
-                "employees": len(result.export.included),
-                "review_files": [group.title for group in result.groups],
-                "needs_review": [check.label for check in result.export.checks if not check.match],
-            }
+        result = process_export(source, output_dir)
     except (UnsupportedExport, PermissionError, FileNotFoundError) as error:
         _emit(sys.stderr, f"Error: {error}")
         return 1
+    report = {
+        "folder": str(result.folder),
+        "pdfs": [str(pdf) for pdf in result.pdfs],
+        "employees": len(result.export.included),
+        "review_files": [group.title for group in result.groups],
+        "needs_review": [check.label for check in result.export.checks if not check.match],
+    }
     _emit(sys.stdout, json.dumps(report, indent=2))
     return 0
 
@@ -235,11 +226,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="punch-clock", description=__doc__)
     parser.add_argument("source", nargs="?", type=Path, help="weekly Jibble export (.xlsx) to process")
     parser.add_argument("--output-dir", type=Path, help="where to create the week's folder (default: beside the export)")
-    parser.add_argument("--approve", type=Path, metavar="FOLDER", help="build the approved report from a processed week's folder")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     args = parser.parse_args(argv)
-    if args.source or args.approve:
-        return run_command_line(args.source, args.approve, args.output_dir)
+    if args.source:
+        return run_command_line(args.source, args.output_dir)
     return run_window()
 
 

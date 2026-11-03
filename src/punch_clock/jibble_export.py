@@ -141,8 +141,7 @@ class WeeklyExport:
     timesheet_rows: int
     entry_rows: int
     column_counts: dict[str, int]
-    # Lowercased department to supervisor name. None for a week made before the list existed.
-    supervisors: Optional[dict[str, str]] = None
+    supervisors: dict[str, str] = field(default_factory=dict)  # lowercased department to supervisor name
 
     @property
     def dates(self) -> list[date]:

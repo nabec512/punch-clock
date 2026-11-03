@@ -12,7 +12,6 @@ Each export gets its own dated folder, created beside it:
 Jibble timesheets 2026-03-02 to 2026-03-08\
     Validation 2026-03-02.txt               every comparison with Jibble's own totals
     Source export 2026-03-02.xlsx           an untouched copy of the export
-    Supervisor list 2026-03-02.json         who reviews each department this week
     Supervisor files\
         Avery Lee - Assembly - 2026-03-02 - Printable.pdf     headcount page, then two employees per page
         Avery Lee - Assembly - 2026-03-02.xlsx
@@ -76,7 +75,7 @@ The department is the Jibble position, without any ending such as `- Supervisor`
 
 Each supervisor's files hold only their own departments.
 
-Each week keeps its own copy of the list, so a change applies to the next reports you make, not to a week already sent out.
+A change applies to the next reports you make, not to files already sent out.
 
 ## How hours are calculated
 
@@ -91,8 +90,6 @@ Each week keeps its own copy of the list, so a change applies to the next report
 | No punches | Shown as `-`, not `0:00`. It doesn't confirm an absence. |
 
 For an 8-hour span with a 20-minute gap, gross is 7:40 and net is 7:10, so 50 minutes are unpaid in total. If the employee's clocked-out time was their lunch, the supervisor can add the 30 minutes back as an adjustment.
-
-Approved hours are always recalculated from the source export and the supervisor's entries, so an edited formula in a returned file can't change the result.
 
 To change the lunch length, edit `LUNCH_MINUTES` in [`hours.py`](src/punch_clock/hours.py) and the wording on the first page in [`pdf_report.py`](src/punch_clock/pdf_report.py).
 
@@ -109,8 +106,6 @@ The app stops with a plain message rather than risk a wrong report. It refuses a
 - Jibble break punches, because the fixed lunch can't be mixed with Jibble's break tracking
 - An employee with too many punches to fit on one printed page
 - A folder path too long for Excel to open
-
-When building the approved report from the command line, it also refuses a review file from a different export, two copies of one supervisor's file, and any other workbook in `Supervisor files`.
 
 A shift that crosses midnight is flagged for review. It may leave that day's hours unavailable, depending on how Jibble dates the punches.
 
@@ -136,23 +131,11 @@ python -m venv .venv
 | `jibble_export.py` | Reads the export by its labels and cross-checks the sheets |
 | `supervisor_list.py` | Saves who supervises each department |
 | `assignments.py` | Decides who reviews whom |
-| `pdf_report.py` | Lays out the printable and approved PDFs |
+| `pdf_report.py` | Lays out the printable PDFs |
 | `review_workbook.py` | Writes each supervisor's spreadsheet |
-| `approvals.py` | Reads returned spreadsheets and works out approved hours |
-| `summary_workbook.py` | Writes accounting's summary of approved hours |
 | `validation_report.py` | Writes the validation file |
-| `reports.py` | Runs the two jobs and manages the week's folder |
+| `reports.py` | Makes the week's reports and manages its folder |
 | `app.py` | The window and command line |
-
-## Approved report from the command line
-
-The window only makes the week's reports. If you'd like the app to combine the returned files, save each one over the original in `Supervisor files`, then run:
-
-```powershell
-punch-clock --approve "Jibble timesheets 2026-03-02 to 2026-03-08"
-```
-
-This adds `Approved timesheets 2026-03-02.pdf` and `Approved hours 2026-03-02.xlsx`. Until every employee is reviewed, they're named `Provisional` and marked as such.
 
 ## Packaging
 
