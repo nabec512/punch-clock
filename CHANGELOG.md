@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 
+
+Adds the auto-updater to the app
+- Uses the public github artefacts to auto-update the app if there is a newer version available.
+
 ## 0.2.0 
 
 Second release.

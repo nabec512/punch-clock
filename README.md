@@ -29,6 +29,8 @@ Your export is only ever read, and everything runs on your own PC. No data is se
 
 It runs on 64-bit Windows 10 and 11. Nothing else needs installing.
 
+Once installed, the app keeps itself up to date. Each time it opens, it checks GitHub for a newer release and offers to install it, then reopens by itself. If the PC is offline, it carries on without saying anything. The saved Supervisors list isn't affected by updates. To update without being asked, for example from a scheduled task, run `PunchClock.exe --update`. Automatic updates only work from the installer's copy, starting with the first version that includes them.
+
 Or download `PunchClock-<version>-windows.zip`, extract the whole folder, and run `PunchClock.exe`.
 
 The app isn't code-signed yet, so Windows may show a SmartScreen warning the first time. To continue, choose **More info**, then **Run anyway**. You can check your download against `SHA256SUMS.txt` in the release.
@@ -135,6 +137,7 @@ python -m venv .venv
 | `review_workbook.py` | Writes each supervisor's spreadsheet |
 | `validation_report.py` | Writes the validation file |
 | `reports.py` | Makes the week's reports and manages its folder |
+| `updater.py` | Finds, downloads and installs newer releases |
 | `app.py` | The window and command line |
 
 ## Packaging
@@ -162,7 +165,9 @@ This installs the pinned dependencies, runs the tests, builds the app, tries the
    git push origin main v0.2.0
    ```
 
-GitHub Actions then runs the same build and publishes the files as a GitHub Release. Installing a new version over an old one upgrades it in place.
+GitHub Actions then runs the same build and publishes the files as a GitHub Release. Installing a new version over an old one upgrades it in place, and every installed copy offers the update the next time it opens.
+
+The tag must match `__version__`, and each new version number must be higher than the last, or installed copies won't see it as an update.
 
 ## License
 

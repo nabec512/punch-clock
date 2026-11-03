@@ -5,15 +5,17 @@ import argparse
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from punch_clock import __version__, supervisor_list
+from punch_clock import __version__, supervisor_list, updater
 from punch_clock.assignments import department_names
 from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, load_export
 from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
+UPDATE_POLL_MS = 500
 
 
 def _employees(count: int) -> str:
@@ -161,12 +163,81 @@ def edit_supervisors(parent, export: Optional[WeeklyExport] = None) -> bool:
     return was_saved
 
 
+def _in_background(root, work: Callable, finished: Callable) -> None:
+    """Run slow network work without freezing the window. Tk may only be used from its own thread."""
+    outcome: list = []
+
+    def run() -> None:
+        try:
+            outcome.append((work(), None))
+        except (OSError, ValueError) as error:
+            outcome.append((None, error))
+
+    def wait() -> None:
+        if outcome:
+            finished(*outcome[0])
+        elif root.winfo_exists():
+            root.after(UPDATE_POLL_MS, wait)
+
+    threading.Thread(target=run, daemon=True).start()
+    wait()
+
+
+def _offer_update(root, status, buttons: Sequence, is_busy: Callable[[], bool]) -> None:
+    """Look for a newer version and offer it. Being offline is normal, so a failed check stays silent."""
+    from tkinter import messagebox
+
+    def checked(update: Optional[updater.Update], _error) -> None:
+        if update:
+            offer(update)
+
+    def offer(update: updater.Update) -> None:
+        if not root.winfo_exists():
+            return
+        if is_busy():  # don't close the app under someone choosing a file
+            root.after(UPDATE_POLL_MS, offer, update)
+        elif messagebox.askyesno(
+            "Update available",
+            f"A new version of {APP_NAME} is ready (you have {__version__}, the new one is {update.version}).\n\n"
+            "Update now? It takes about a minute, and the app reopens by itself.",
+            parent=root,
+        ):
+            start(update)
+
+    def start(update: updater.Update) -> None:
+        before = status.get()
+        for button in buttons:
+            button.state(["disabled"])
+        status.set("Downloading the update. Punch Clock will close and reopen by itself.")
+
+        def downloaded(installer: Optional[Path], error) -> None:
+            try:
+                if error:
+                    raise error
+                updater.install(installer)
+            except (OSError, ValueError):
+                status.set(before)
+                for button in buttons:
+                    button.state(["!disabled"])
+                messagebox.showerror(
+                    "Update didn't finish",
+                    f"You can keep using this version. {APP_NAME} will try again the next time you open it.",
+                    parent=root,
+                )
+            else:
+                root.destroy()
+
+        _in_background(root, lambda: updater.download(update), downloaded)
+
+    _in_background(root, updater.find_update, checked)
+
+
 def run_window() -> int:
     import tkinter as tk
     from tkinter import ttk
 
     root = tk.Tk()
-    root.title(APP_NAME)
+    root.title(f"{APP_NAME} {__version__}")
     root.minsize(520, 360)
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill="both", expand=True)
@@ -175,6 +246,18 @@ def run_window() -> int:
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
     last_folder: dict[str, Path] = {}
     last_export: dict[str, WeeklyExport] = {}
+    busy = False
+
+    def while_busy(action: Callable) -> Callable:
+        def run() -> None:
+            nonlocal busy
+            busy = True
+            try:
+                action()
+            finally:
+                busy = False
+
+        return run
 
     def on_process() -> None:
         result = choose_and_process(root)
@@ -186,16 +269,22 @@ def run_window() -> int:
             os.startfile(result.folder)
 
     ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
-    ttk.Button(frame, text="Make this week's reports...", command=on_process).grid(row=1, column=0, sticky="ew", pady=(4, 12))
+    process_button = ttk.Button(frame, text="Make this week's reports...", command=while_busy(on_process))
+    process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
     ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=2, column=0, sticky="nsew")
     bottom = ttk.Frame(frame)
     bottom.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-    ttk.Button(
-        bottom, text="Supervisors...", command=lambda: _show_errors(root, lambda: edit_supervisors(root, last_export.get("export")))
-    ).pack(side="left")
+    supervisors_button = ttk.Button(
+        bottom,
+        text="Supervisors...",
+        command=while_busy(lambda: _show_errors(root, lambda: edit_supervisors(root, last_export.get("export")))),
+    )
+    supervisors_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
     open_button.state(["disabled"])
     open_button.pack(side="right")
+    if updater.is_packaged():
+        _offer_update(root, status, [process_button, supervisors_button], lambda: busy)
     root.mainloop()
     return 0
 
@@ -222,12 +311,33 @@ def run_command_line(source: Path, output_dir: Optional[Path]) -> int:
     return 0
 
 
+def run_update() -> int:
+    """Update without asking, for running from a command prompt or a scheduled task."""
+    if not updater.is_packaged():
+        _emit(sys.stderr, "Error: updating only works from an installed copy of the app.")
+        return 1
+    try:
+        update = updater.find_update()
+        if not update:
+            _emit(sys.stdout, f"{APP_NAME} {__version__} is up to date.")
+            return 0
+        updater.install(updater.download(update), reopen=False)
+    except (OSError, ValueError) as error:
+        _emit(sys.stderr, f"Error: the update didn't finish. {error}")
+        return 1
+    _emit(sys.stdout, f"Installing {APP_NAME} {update.version}.")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="punch-clock", description=__doc__)
     parser.add_argument("source", nargs="?", type=Path, help="weekly Jibble export (.xlsx) to process")
     parser.add_argument("--output-dir", type=Path, help="where to create the week's folder (default: beside the export)")
+    parser.add_argument("--update", action="store_true", help="install the latest release, if there's a newer one")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     args = parser.parse_args(argv)
+    if args.update:
+        return run_update()
     if args.source:
         return run_command_line(args.source, args.output_dir)
     return run_window()

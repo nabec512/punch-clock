@@ -35,3 +35,11 @@ Name: "{autodesktop}\Punch Clock"; Filename: "{app}\PunchClock.exe"; Tasks: desk
 
 [Run]
 Filename: "{app}\PunchClock.exe"; Description: "Start Punch Clock"; Flags: nowait postinstall skipifsilent
+; After the app updates itself, the silent install reopens it.
+Filename: "{app}\PunchClock.exe"; Flags: nowait; Check: ReopenAfterUpdate
+
+[Code]
+function ReopenAfterUpdate: Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:reopen|0}') = '1');
+end;
