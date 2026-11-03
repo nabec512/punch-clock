@@ -137,7 +137,7 @@ def test_empty_break_columns_are_accepted():
 def test_missing_sheet_is_rejected(sheet):
     workbook = build_workbook()
     del workbook[sheet]
-    with pytest.raises(UnsupportedExport, match="Missing worksheet"):
+    with pytest.raises(UnsupportedExport, match="missing a sheet"):
         read(workbook)
 
 
@@ -192,16 +192,16 @@ def _roster_mismatch(workbook):
 @pytest.mark.parametrize(
     "change, message",
     [
-        (_duplicate_daily_row, "duplicate employee/date"),
-        (_decimal_duration, "unsupported duration"),
-        (_unknown_entry_type, "unsupported entry type"),
-        (_blank_member_code, "missing member code"),
-        (_mixed_timezones, "Mixed or missing"),
-        (_renamed_column, "expected one header row"),
-        (_renamed_individual_column, "expected one header row"),
-        (_partial_week, "Monday-Sunday"),
-        (_missing_individual_sheet, "individual summary"),
-        (_roster_mismatch, "roster differs"),
+        (_duplicate_daily_row, "appears twice"),
+        (_decimal_duration, "can't read the time"),
+        (_unknown_entry_type, "unknown entry type"),
+        (_blank_member_code, "member code or name is missing"),
+        (_mixed_timezones, "different or missing time zones"),
+        (_renamed_column, "column headings"),
+        (_renamed_individual_column, "column headings"),
+        (_partial_week, "Monday to Sunday"),
+        (_missing_individual_sheet, "own sheet"),
+        (_roster_mismatch, "list of employees"),
     ],
 )
 def test_unsafe_exports_are_rejected_with_a_clear_message(change, message):

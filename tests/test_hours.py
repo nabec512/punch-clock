@@ -20,30 +20,21 @@ def totals(*times):
     "times, expected",
     [
         pytest.param([(9, 0, 0), (17, 0, 0)], (480, 30, 450), id="no gap: full lunch"),
-        pytest.param([(9, 0, 0), (12, 0, 0), (12, 30, 0), (17, 0, 0)], (450, 0, 450), id="30-minute gap: no lunch"),
-        pytest.param([(9, 0, 0), (12, 0, 0), (12, 20, 0), (17, 0, 0)], (460, 10, 450), id="20-minute gap: remainder"),
-        pytest.param([(9, 0, 0), (12, 0, 0), (12, 45, 0), (17, 0, 0)], (435, 0, 435), id="45-minute gap: no lunch"),
-        pytest.param(
-            [(9, 0, 0), (11, 0, 0), (11, 10, 0), (13, 0, 0), (13, 10, 0), (17, 0, 0)],
-            (460, 10, 450),
-            id="two 10-minute gaps add up",
-        ),
+        pytest.param([(9, 0, 0), (12, 0, 0), (12, 30, 0), (17, 0, 0)], (450, 30, 420), id="30-minute gap: full lunch"),
+        pytest.param([(9, 0, 0), (12, 0, 0), (12, 20, 0), (17, 0, 0)], (460, 30, 430), id="20-minute gap: full lunch"),
+        pytest.param([(9, 0, 0), (12, 0, 0), (12, 45, 0), (17, 0, 0)], (435, 30, 405), id="45-minute gap: full lunch"),
         pytest.param(
             [(9, 0, 0), (11, 0, 0), (11, 20, 0), (13, 0, 0), (13, 20, 0), (17, 0, 0)],
-            (440, 0, 440),
-            id="two 20-minute gaps pass 30",
+            (440, 30, 410),
+            id="several gaps: one lunch",
         ),
+        pytest.param([(9, 0, 0), (9, 30, 0)], (30, 30, 0), id="shift as long as lunch"),
         pytest.param([(9, 0, 0), (9, 10, 0)], (10, 10, 0), id="short shift: capped at gross"),
         pytest.param([(9, 0, 0), (9, 10, 0), (9, 15, 0), (9, 20, 0)], (15, 15, 0), id="short shift with gap: capped"),
     ],
 )
 def test_gross_lunch_net(times, expected):
     assert totals(*times) == expected
-
-
-def test_gap_rounds_to_nearest_minute():
-    assert totals((9, 0, 0), (12, 0, 0), (12, 29, 29), (17, 0, 0))[1] == 1
-    assert totals((9, 0, 0), (12, 0, 0), (12, 29, 30), (17, 0, 0))[1] == 0
 
 
 def test_daily_gross_is_rounded_once_not_per_session():
@@ -77,6 +68,8 @@ def test_missing_source_row_leaves_hours_unavailable():
 
 def test_lunch_capped_flag():
     assert calculate_day(day((9, 0, 0), (9, 10, 0))).lunch_capped
+    assert calculate_day(day((9, 0, 0), (9, 10, 0), (9, 15, 0), (9, 20, 0))).lunch_capped
+    assert not calculate_day(day((9, 0, 0), (9, 30, 0))).lunch_capped
     assert not calculate_day(day((9, 0, 0), (17, 0, 0))).lunch_capped
     assert not calculate_day([]).lunch_capped
 

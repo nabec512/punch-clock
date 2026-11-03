@@ -180,7 +180,7 @@ def _read_file(path: Path, export: WeeklyExport) -> _ReviewFile:
     try:
         workbook = openpyxl.load_workbook(path, data_only=False)
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
-        raise UnsupportedExport(f"{path.name} could not be opened as an Excel workbook.") from error
+        raise UnsupportedExport(f"{path.name} could not be opened. Make sure it's an Excel file.") from error
     if INFO_SHEET not in workbook or REVIEW_SHEET not in workbook:
         raise UnsupportedExport(f"{path.name} isn't a Punch Clock review file. Move it out of this folder and try again.")
     info = {row[0]: row[1] for row in workbook[INFO_SHEET].iter_rows(values_only=True) if row[0]}
@@ -188,7 +188,7 @@ def _read_file(path: Path, export: WeeklyExport) -> _ReviewFile:
         raise UnsupportedExport(f"{path.name} was made by a different version of this app.")
     if info.get("source_sha256") != export.sha256:
         raise UnsupportedExport(
-            f"{path.name} was made from a different Jibble export, so it can't be combined with this week's report."
+            f"{path.name} was made from a different Jibble file, so it can't be combined with this week's report."
         )
     return _read_review_sheet(path, workbook[REVIEW_SHEET], info, export)
 
@@ -197,11 +197,11 @@ def _read_review_sheet(path: Path, sheet, info: dict, export: WeeklyExport) -> _
     rows = list(sheet.iter_rows(values_only=True))
     header_index = next((i for i, row in enumerate(rows) if CODE in row and ADJUSTMENT in row and REVIEWED in row), None)
     if header_index is None:
-        raise UnsupportedExport(f"{path.name}: the review table's headings have changed.")
+        raise UnsupportedExport(f"{path.name}: the column headings have been changed.")
     labels = list(rows[header_index])
     missing = [x for x in (CODE, DATE, NET, ADJUSTMENT, APPROVED, COMMENT, REVIEWED) if x not in labels]
     if missing:
-        raise UnsupportedExport(f"{path.name}: missing column {', '.join(missing)}.")
+        raise UnsupportedExport(f"{path.name}: these columns are missing: {', '.join(missing)}.")
     column = {label: labels.index(label) for label in (CODE, DATE, NET, ADJUSTMENT, APPROVED, COMMENT, REVIEWED)}
     known = {e.code: e for e in export.included}
 

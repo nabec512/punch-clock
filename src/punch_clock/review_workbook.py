@@ -40,7 +40,8 @@ COLUMN = {label: index for index, (label, _) in enumerate(COLUMNS)}
 INSTRUCTIONS = [
     "Only the yellow and orange cells can be changed.",
     "Adjustment is in minutes, added to Net: 15 adds 15 minutes, -15 removes 15 minutes, 0 means no change. "
-    "Time already clocked out isn't counted, so don't deduct it again.",
+    "30 minutes of lunch is taken off every day worked, even if the employee also clocked out. "
+    "If that's wrong, add the minutes back here.",
     "Orange means the punches are incomplete: type the approved hours as h:mm, for example 7:30.",
     "When you've finished an employee, choose Yes under Reviewed in their Week total row, "
     "then save this file and return it to accounting.",
@@ -107,7 +108,9 @@ def _day_flags(record: DayRecord) -> str:
     elif not record.punches:
         flags.append("No punches.")
     for out, back in hours.gaps:
-        flags.append(f"Clocked out {_clock(out)}-{_clock(back)} ({format_minutes(gap_minutes(out, back))}), already excluded.")
+        flags.append(f"Clocked out {_clock(out)}-{_clock(back)} ({format_minutes(gap_minutes(out, back))}), not counted in Gross.")
+    if hours.gaps and hours.lunch:
+        flags.append(f"{format_minutes(hours.lunch)} lunch also deducted.")
     if hours.lunch_capped:
         flags.append("Lunch capped at gross hours.")
     flags.extend(f'Jibble note: "{p.note}"' for p in record.punches if p.note)
