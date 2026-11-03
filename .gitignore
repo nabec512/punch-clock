@@ -1,0 +1,36 @@
+# --- Payroll data: never commit real exports or generated reports ---
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.pdf
+*.validation.txt
+exports/
+private/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build output (PyInstaller, installer, release archives)
+build/
+dist/
+
+# Local settings and secrets
+.env
+.env.*
+.claude/
+.vscode/
+.idea/
+
+# Leftovers
+*.bak*
+*.log
+Thumbs.db
+desktop.ini

@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches the app version
+        shell: pwsh
+        run: |
+          $line = Select-String -Path 'src/punch_clock/__init__.py' -Pattern '__version__ = "(.+)"'
+          $version = $line.Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match version $version."
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --yes --no-progress
+          }
+
+      - name: Build
+        shell: pwsh
+        run: ./packaging/build.ps1 -RequireInstaller
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            (Get-ChildItem dist -File).FullName `
+            --title "Punch Clock $env:GITHUB_REF_NAME" `
+            --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

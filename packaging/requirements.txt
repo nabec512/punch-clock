@@ -1,0 +1,27 @@
+# Exact versions used to test and package a release. Update these deliberately,
+# then rerun packaging\build.ps1 to confirm the tests and smoke test still pass.
+
+# Runtime
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+reportlab==5.1.0
+pillow==13.0.0
+charset-normalizer==3.5.2
+pypdf==6.21.4
+XlsxWriter==3.3.1
+
+# Packaging
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+altgraph==0.17.5
+packaging==26.3
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+setuptools==84.2.1
+
+# Tests
+pytest==9.2.0
+iniconfig==2.3.1
+pluggy==1.7.0
+Pygments==2.21.0
+colorama==0.4.6
