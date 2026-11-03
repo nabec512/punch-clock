@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Optional
 
-LUNCH_MINUTES = 30  # unpaid lunch per worked day; clocked-out gaps count toward it
+LUNCH_MINUTES = 30  # unpaid lunch per worked day, even if the employee also clocked out
 
 
 @dataclass(frozen=True)
@@ -39,9 +39,7 @@ class DayHours:
 
     @property
     def lunch_capped(self) -> bool:
-        if not self.gross:
-            return False
-        return self.gross < LUNCH_MINUTES - gap_total(self.sessions)
+        return bool(self.gross) and self.gross < LUNCH_MINUTES
 
 
 def round_to_minutes(seconds: int) -> int:
@@ -96,18 +94,11 @@ def gap_minutes(out: datetime, back: datetime) -> int:
     return round_to_minutes(int((back - out).total_seconds()))
 
 
-def gap_total(sessions: Iterable[Session]) -> int:
-    """Add the day's gaps exactly, then round once, as with gross."""
-    return round_to_minutes(
-        sum(int((back - out).total_seconds()) for out, back in clocked_out_gaps(sessions))
-    )
-
-
 def calculate_day(punches: Iterable[Punch], has_source_row: bool = True) -> DayHours:
     sessions, problems = pair_punches(punches)
     if problems or not has_source_row:
         return DayHours(tuple(sessions), None, None, None)
     seconds = sum(int((s.end - s.start).total_seconds()) for s in sessions)
     gross = round_to_minutes(seconds)  # round the daily sum once, not each session
-    lunch = min(max(0, LUNCH_MINUTES - gap_total(sessions)), gross) if seconds else 0
+    lunch = min(LUNCH_MINUTES, gross)  # net never goes below zero
     return DayHours(tuple(sessions), gross, lunch, gross - lunch)

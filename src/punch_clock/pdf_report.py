@@ -1,11 +1,11 @@
-"""Printable PDF: a department headcount page, then up to two employees per page."""
+"""Timesheet PDF: a department headcount page, then up to two employees per page."""
 from __future__ import annotations
 
 import os
 from functools import lru_cache
 from html import escape
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
@@ -14,7 +14,7 @@ from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
 
-from punch_clock.approvals import ApprovalSet, EmployeeApproval
+from punch_clock.assignments import MISSING_SUPERVISOR_TITLE, ReviewGroup, missing_supervisor_codes
 from punch_clock.hours import format_minutes, gap_minutes, weekly_total
 from punch_clock.jibble_export import Employee, UnsupportedExport, WeeklyExport
 
@@ -88,7 +88,7 @@ def _clock(value) -> str:
     return "NR" if value is None else value.strftime("%H:%M:%S")
 
 
-def _employee_block(export: WeeklyExport, employee: Employee, approval: Optional[EmployeeApproval] = None) -> list:
+def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor: bool = False) -> list:
     block = [
         _table(
             [[_para(f"{employee.name} ({employee.code})", 12, bold=True), _para(employee.position, 11)]],
@@ -97,9 +97,9 @@ def _employee_block(export: WeeklyExport, employee: Employee, approval: Optional
         ),
         Spacer(1, 5),
     ]
+    if missing_supervisor:
+        block += [_para(MISSING_SUPERVISOR_TITLE.upper(), 9, WARN, bold=True), Spacer(1, 5)]
     rows = [["Day / date", "In", "Out", "Gross", "Lunch", "Net"]]
-    if approval:
-        rows[0] += ["Adj.", "Approved"]
     warnings: list[str] = []
     info: list[str] = []
     gross_days: list[Optional[int]] = []
@@ -110,13 +110,12 @@ def _employee_block(export: WeeklyExport, employee: Employee, approval: Optional
         gross_days.append(hours.gross)
         net_days.append(hours.net)
         label = day.strftime("%a %b %d")
-        extra = _approval_cells(approval.days[day]) if approval else []
         if day.weekday() < 5 or record.punches or record.issues:
             if not hours.sessions:
                 # No punches is not a recorded zero, so it never prints as 0:00.
                 dash = "-" if hours.gross is not None else format_minutes(None)
                 first = "No punches" if hours.gross is not None else "NR"
-                rows.append([label, first, "", dash, dash, dash, *extra])
+                rows.append([label, first, "", dash, dash, dash])
             for index, session in enumerate(hours.sessions):
                 rows.append(
                     [
@@ -126,7 +125,6 @@ def _employee_block(export: WeeklyExport, employee: Employee, approval: Optional
                         format_minutes(hours.gross) if index == 0 else "",
                         format_minutes(hours.lunch) if index == 0 else "",
                         format_minutes(hours.net) if index == 0 else "",
-                        *(extra if index == 0 else ["" for _ in extra]),
                     ]
                 )
         if hours.gaps:
@@ -134,60 +132,32 @@ def _employee_block(export: WeeklyExport, employee: Employee, approval: Optional
         for punch in record.punches:
             if punch.note:
                 info.append(f'{day:%a} {punch.kind} {_clock(punch.time)}, Jibble note: "{punch.note}"')
-        if hours.gross is None and not (approval and approval.days[day].approved is not None):
+        if hours.gross is None:
             warnings.append(f"{day:%a}: incomplete or invalid punches; hours need supervisor review.")
         if hours.lunch_capped:
             warnings.append(f"{day:%a}: lunch capped at gross hours.")
         warnings.extend(f"{day:%a}: {issue}" for issue in record.issues)
-        if approval:
-            entry = approval.days[day]
-            if entry.input.comment:
-                info.append(f'{day:%a} supervisor comment: "{entry.input.comment}"')
-            warnings.extend(f"{day:%a}: {problem}" for problem in entry.problems)
-    widths = [84, 68, 68, 62, 58, 62, 58, 80] if approval else [110, 100, 100, 77, 76, 77]
     weekly = [
         "Weekly gross",
         format_minutes(weekly_total(gross_days)),
         "Weekly net",
         format_minutes(weekly_total(net_days)),
+        "Jibble OT",
+        format_minutes(employee.overtime),
     ]
-    if approval:
-        weekly += ["Approved", format_minutes(approval.approved), "Jibble OT", format_minutes(employee.overtime)]
-        weekly_widths = [76, 58, 66, 58, 66, 74, 62, 80]
-    else:
-        weekly += ["Jibble OT", format_minutes(employee.overtime)]
-        weekly_widths = [110, 70, 100, 70, 110, 80]
     block += [
-        _table(rows, widths, padding=4),
+        _table(rows, [110, 100, 100, 77, 76, 77], padding=4),
         Spacer(1, 6),
-        _table([weekly], weekly_widths, header=False),
+        _table([weekly], [110, 70, 100, 70, 110, 80], header=False),
     ]
-    if approval:
-        if approval.week_comment:
-            info.append(f'Week comment: "{approval.week_comment}"')
-        warnings.extend(approval.problems)
     for note in dict.fromkeys(info):
         block += [Spacer(1, 4), _para(note, 9, MUTED)]
     for note in dict.fromkeys(warnings):
         block += [Spacer(1, 4), _para(note, 9, WARN)]
     block.append(Spacer(1, 9))
-    if not approval:
-        block.append(_para("Adjustment: __________  Approved hours: __________  Supervisor: __________________", 9))
-    elif approval.reviewed:
-        block.append(_para(f"Reviewed in: {approval.reviewed_in}", 9))
-    else:
-        block.append(_para(f"NOT REVIEWED YET. Review file: {approval.reviewed_in or 'not found'}", 9, WARN))
+    block.append(_para("Adjustment: __________  Approved hours: __________  Supervisor: __________________", 9))
     block.append(Spacer(1, 6))
     return block
-
-
-def _approval_cells(entry) -> list[str]:
-    adjustment = entry.input.adjustment
-    # A blank stays blank, so "reviewed with no change" (0) can be told from no entry.
-    shown = "" if adjustment is None else f"{adjustment:+d} min" if adjustment else "0 min"
-    if entry.unresolved:
-        return [shown, format_minutes(None)]
-    return [shown, "-" if entry.approved is None else format_minutes(entry.approved)]
 
 
 def _gap_note(day, hours) -> str:
@@ -197,9 +167,7 @@ def _gap_note(day, hours) -> str:
     note = f"{day:%a}: clocked out {ranges}; already excluded from gross."
     if hours.gross is None:
         return note
-    if not hours.lunch:
-        return f"{note} No lunch deducted."
-    return f"{note} Counts toward lunch; {format_minutes(hours.lunch)} more deducted."
+    return f"{note} {format_minutes(hours.lunch)} lunch also deducted."
 
 
 def _block_height(block: list) -> float:
@@ -214,17 +182,19 @@ def _draw_block(pdf, block: list, y: float) -> float:
     return y
 
 
-def _paginate(export: WeeklyExport, approvals: Optional[ApprovalSet] = None) -> list[list[list]]:
+def _paginate(export: WeeklyExport, employees: Sequence[Employee]) -> list[list[list]]:
     """Measure whole employee blocks before packing, so an employee is never split."""
     pages: list[list[list]] = []
     current: list[list] = []
     used = 0.0
-    for employee in export.included:
-        block = _employee_block(export, employee, approvals.employees[employee.code] if approvals else None)
+    unsupervised = missing_supervisor_codes(export)
+    for employee in employees:
+        block = _employee_block(export, employee, employee.code in unsupervised)
         height = _block_height(block)
         if height > PAGE_CAPACITY:
             raise UnsupportedExport(
-                f"{employee.name}: too much detail for one printed page. Review the export; no report was made."
+                f"{employee.name} has too much information to fit on one printed page, so no report was made. "
+                "Check this employee's punches and notes."
             )
         gap = BLOCK_GAP if current else 0
         if current and (len(current) == EMPLOYEES_PER_PAGE or used + gap + height > PAGE_CAPACITY):
@@ -237,20 +207,25 @@ def _paginate(export: WeeklyExport, approvals: Optional[ApprovalSet] = None) -> 
     return pages
 
 
-def _department_chunks(export: WeeklyExport) -> list[list[tuple[str, list[Employee]]]]:
+def _department_chunks(employees: Sequence[Employee]) -> list[list[tuple[str, list[Employee]]]]:
     departments: dict[str, tuple[str, list[Employee]]] = {}
-    for employee in export.included:
+    for employee in employees:
         key = employee.department.casefold()
         departments.setdefault(key, (employee.department, []))[1].append(employee)
     ordered = [departments[key] for key in sorted(departments)]
     return [ordered[i : i + DEPARTMENTS_PER_PAGE] for i in range(0, len(ordered), DEPARTMENTS_PER_PAGE)] or [[]]
 
 
-def page_count(export: WeeklyExport, approvals: Optional[ApprovalSet] = None) -> int:
-    return len(_department_chunks(export)) + len(_paginate(export, approvals))
+def _employees(export: WeeklyExport, group: Optional[ReviewGroup]) -> Sequence[Employee]:
+    return group.employees if group else export.included
 
 
-def _page_frame(pdf, export: WeeklyExport, title: str, page: int, pages: int) -> None:
+def page_count(export: WeeklyExport, group: Optional[ReviewGroup] = None) -> int:
+    employees = _employees(export, group)
+    return len(_department_chunks(employees)) + len(_paginate(export, employees))
+
+
+def _page_frame(pdf, export: WeeklyExport, group: Optional[ReviewGroup], title: str, page: int, pages: int) -> None:
     regular, heavy = _fonts()
     pdf.setFillColor(INK)
     pdf.setFont(heavy, 12)
@@ -258,6 +233,10 @@ def _page_frame(pdf, export: WeeklyExport, title: str, page: int, pages: int) ->
     pdf.setFont(regular, 10)
     pdf.drawRightString(RIGHT, 754, title)
     pdf.drawString(LEFT, 733, export.period)
+    if group:
+        pdf.setFont(heavy, 10)
+        pdf.setFillColor(WARN if group.supervisor is None else INK)
+        pdf.drawRightString(RIGHT, 733, group.title)
     pdf.setStrokeColor(RULE)
     pdf.line(LEFT, 722, RIGHT, 722)
     pdf.setFont(regular, 8)
@@ -272,31 +251,29 @@ def _write_note(pdf, text, y, size=9, color=MUTED) -> float:
     return y - height - 8
 
 
-def _headcount_page(pdf, export: WeeklyExport, chunk, is_last: bool, approvals: Optional[ApprovalSet] = None) -> None:
+def _headcount_page(pdf, export: WeeklyExport, group: Optional[ReviewGroup], chunk, is_last: bool) -> None:
+    employees = _employees(export, group)
     y = CONTENT_TOP
-    if approvals and not approvals.is_final:
-        y = _write_note(pdf, _provisional_text(approvals), y, 10, WARN)
-    y = _write_note(pdf, "Distinct employees in this export with a recorded position.", y)
+    if group and group.supervisor is None:
+        y = _write_note(
+            pdf,
+            "These departments have no supervisor on the list in Punch Clock, so accounting reviews them.",
+            y,
+            10,
+            WARN,
+        )
+    y = _write_note(pdf, f"Distinct employees in this {'report' if group else 'export'} with a recorded position.", y)
     rows = [["Department", "Employees", "With punches"]]
-    widths = [340, 100, 100]
-    if approvals:
-        rows[0] += ["Reviewed", "Approved"]
-        widths = [240, 75, 85, 70, 70]
 
-    def row(label: str, members: list[Employee]) -> list[str]:
-        cells = [label, str(len(members)), str(sum(m.has_punches for m in members))]
-        if approvals:
-            entries = [approvals.employees[m.code] for m in members]
-            cells.append(str(sum(a.reviewed for a in entries)))
-            cells.append(format_minutes(weekly_total(a.approved for a in entries)))
-        return cells
+    def row(label: str, members: Sequence[Employee]) -> list[str]:
+        return [label, str(len(members)), str(sum(m.has_punches for m in members))]
 
     for department, members in chunk:
         rows.append(row(department, members))
     if is_last:
-        rows.append(row("Total", export.included))
-    y = _draw_block(pdf, [_table(rows, widths, padding=7)], y) - 15
-    if not export.included:
+        rows.append(row("Total", employees))
+    y = _draw_block(pdf, [_table(rows, [340, 100, 100], padding=7)], y) - 15
+    if not employees:
         y = _write_note(
             pdf,
             "No employees have a recorded position in this export, so there are no employee pages. "
@@ -314,7 +291,7 @@ def _headcount_page(pdf, export: WeeklyExport, chunk, is_last: bool, approvals: 
     y = _write_note(
         pdf,
         "Net = gross less a 30-minute unpaid lunch per day with work, capped at gross hours. "
-        "Clocked-out gaps that day count toward the 30 minutes, so only the remainder is deducted. "
+        "The 30 minutes are deducted even if the employee also clocked out that day; supervisors can adjust this. "
         "Days without punches have no deduction. Incomplete punches leave gross/net unavailable.",
         y,
     )
@@ -327,35 +304,22 @@ def _headcount_page(pdf, export: WeeklyExport, chunk, is_last: bool, approvals: 
     )
 
 
-def _provisional_text(approvals: ApprovalSet) -> str:
-    parts = ["PROVISIONAL: not everything is approved."]
-    waiting = len(approvals.not_reviewed)
-    if waiting:
-        parts.append(f"{waiting} of {len(approvals.employees)} employees are not reviewed yet.")
-    needing = sum(a.approved is None for a in approvals.employees.values())
-    if needing:
-        parts.append(f"{needing} still need hours entered.")
-    if approvals.missing_files:
-        parts.append("Review files not found: " + ", ".join(approvals.missing_files) + ".")
-    return " ".join(parts)
-
-
-def render(export: WeeklyExport, path: str | Path, approvals: Optional[ApprovalSet] = None) -> None:
+def render(export: WeeklyExport, path: str | Path, group: Optional[ReviewGroup] = None) -> None:
+    """Report on one review group, or on all included employees when no group is given."""
     pdf = canvas.Canvas(str(path), pagesize=PAGE_SIZE)
-    pdf.setTitle(f"{export.company or 'Weekly'} timesheets - {export.start:%Y-%m-%d}")
-    chunks = _department_chunks(export)
-    employee_pages = _paginate(export, approvals)
+    named = f" - {group.title}" if group else ""
+    pdf.setTitle(f"{export.company or 'Weekly'} timesheets{named} - {export.start:%Y-%m-%d}")
+    employees = _employees(export, group)
+    chunks = _department_chunks(employees)
+    employee_pages = _paginate(export, employees)
     pages = len(chunks) + len(employee_pages)
-    title = "Employee timesheets"
-    if approvals:
-        title = "Approved timesheets" if approvals.is_final else "PROVISIONAL timesheets"
     for number, chunk in enumerate(chunks, 1):
-        _page_frame(pdf, export, "Department headcount", number, pages)
-        _headcount_page(pdf, export, chunk, number == len(chunks), approvals)
+        _page_frame(pdf, export, group, "Department headcount", number, pages)
+        _headcount_page(pdf, export, group, chunk, number == len(chunks))
         pdf.showPage()
     regular, _ = _fonts()
     for number, blocks in enumerate(employee_pages, len(chunks) + 1):
-        _page_frame(pdf, export, title, number, pages)
+        _page_frame(pdf, export, group, "Employee timesheets", number, pages)
         y = CONTENT_TOP
         for index, block in enumerate(blocks):
             if index:

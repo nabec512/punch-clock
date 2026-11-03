@@ -1,6 +1,6 @@
 # Punch Clock
 
-Punch Clock is a small Windows app that turns a weekly [Jibble](https://www.jibble.io/) timesheet export into a printable report and a review spreadsheet for each supervisor. Once the supervisors have made their changes, it combines them into an approved report for accounting.
+Punch Clock is a small Windows app that turns a weekly [Jibble](https://www.jibble.io/) timesheet export into a printable PDF and a review spreadsheet for each supervisor. The supervisors send their changes back to accounting, who process them from there.
 
 It isn't affiliated with or endorsed by Jibble.
 
@@ -10,22 +10,14 @@ Each export gets its own dated folder, created beside it:
 
 ```text
 Jibble timesheets 2026-03-02 to 2026-03-08\
-    Printable timesheets 2026-03-02.pdf     headcount page, then two employees per page
     Validation 2026-03-02.txt               every comparison with Jibble's own totals
     Source export 2026-03-02.xlsx           an untouched copy of the export
     Supervisor files\
-        Review - Assembly - Avery Lee - 2026-03-02.xlsx
-        Review - Accounting - no supervisor - 2026-03-02.xlsx
+        Avery Lee - Assembly - 2026-03-02 - Printable.pdf     headcount page, then two employees per page
+        Avery Lee - Assembly - 2026-03-02.xlsx
+        Missing supervisor - 2026-03-02 - Printable.pdf
+        Missing supervisor - 2026-03-02.xlsx
 ```
-
-Building the approved report adds these two files:
-
-```text
-    Approved timesheets 2026-03-02.pdf      with adjustments, approved hours and comments
-    Approved hours 2026-03-02.xlsx          totals for payroll, plus every change made
-```
-
-Until every employee is reviewed, they're named `Provisional` and marked as such.
 
 Your export is only ever read, and everything runs on your own PC. No data is sent anywhere. Processing the same export again creates a new folder ending in `(2)`, so returned files are never overwritten.
 
@@ -55,47 +47,49 @@ The `Team Summary` sheet is also used, for the week, company name and team total
 
 ## Weekly use
 
-**Step 1: process the export.** Open Punch Clock, choose **Process a Jibble export**, and select the file. The week's folder opens when it's ready. Print the PDF if you need it, and send each file in `Supervisor files` to its supervisor.
+**Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. If the file has a department the app hasn't seen before, it asks who supervises it. The week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
 
-**Step 2: supervisors review.** In their file, each supervisor:
+**Step 2: supervisors review.** In their Excel file, each supervisor:
 
 - Enters any adjustment in minutes, added to Net: `15` adds 15 minutes, `-15` removes 15 minutes, and `0` means no change.
 - Types the approved hours as `h:mm` on any orange row, where the punches are incomplete.
 - Adds comments if needed.
 - Chooses **Yes** under **Reviewed** in each employee's **Week total** row.
 
-**Step 3: build the approved report.** Save each returned file over the original in `Supervisor files`, keeping one file per supervisor. Then choose **Build the approved report** and select the week's folder. You can run this at any time: it shows what's still outstanding, and you can run it again as more files come back.
+**Step 3: accounting takes over.** Supervisors send their Excel files back to accounting, who process them from there.
 
 To correct a punch or a position, fix it in Jibble, export again, and start from step 1.
 
 ## Who reviews whom
 
-A position ending in `- Supervisor` makes that person the supervisor of the department before the tag. `Assembly - Supervisor` supervises everyone whose position is `Assembly`, and counts as part of the Assembly department.
+Choose **Supervisors** in the app to set who reviews each department. A supervisor doesn't need to be in Jibble, and one person can cover several departments, with one PDF and one Excel file for all of them. The list is saved on this PC, in `%APPDATA%\Punch Clock\supervisors.json`.
 
-| Who | Whose file they're in |
+| Who | Whose files they're in |
 |---|---|
 | Employees in a department with a supervisor | That supervisor's |
-| Employees in a department with no supervisor | Accounting's |
-| Supervisors themselves | Their own, along with their department |
+| Employees in a department with no supervisor | The `Missing supervisor` files, which accounting reviews. They're also marked `MISSING SUPERVISOR` in the PDFs |
+| Supervisors who are also employees | Whoever supervises the department in their position, so usually their own |
 | Employees with no position | Nobody's: they're left out and listed in the validation file |
 
-Each supervisor's file holds only their own department.
+The department is the Jibble position, without any ending such as `- Supervisor`, so `Assembly` and `Assembly - Supervisor` are one department. That ending only fills in the first guess when the app first sees a department.
+
+Each supervisor's files hold only their own departments.
+
+A change applies to the next reports you make, not to files already sent out.
 
 ## How hours are calculated
 
 | Item | Rule |
 |---|---|
 | Gross | Sum of completed In/Out sessions, rounded once per day to the nearest minute. Clocked-out time isn't counted. |
-| Lunch | 30 minutes unpaid per worked day, capped at gross. The day's clocked-out gaps count toward the 30 minutes, so only the remainder is deducted. |
+| Lunch | 30 minutes unpaid per worked day, even if the employee also clocked out that day. It's capped at gross, so net never goes below zero. |
 | Net | Gross minus lunch. |
 | Approved | Net plus the supervisor's adjustment. On an incomplete day, the hours the supervisor typed. |
 | Overtime | Jibble's five recorded categories, added together. Never recalculated. |
 | Incomplete punches | That day's and that week's gross and net show `MISSING` until reviewed. |
 | No punches | Shown as `-`, not `0:00`. It doesn't confirm an absence. |
 
-For an 8-hour span with a 20-minute gap, 10 minutes of lunch are deducted, so 30 minutes are unpaid in total. With a gap of 30 minutes or more, nothing further is deducted.
-
-Approved hours are always recalculated from the source export and the supervisor's entries, so an edited formula in a returned file can't change the result.
+For an 8-hour span with a 20-minute gap, gross is 7:40 and net is 7:10, so 50 minutes are unpaid in total. If the employee's clocked-out time was their lunch, the supervisor can add the 30 minutes back as an adjustment.
 
 To change the lunch length, edit `LUNCH_MINUTES` in [`hours.py`](src/punch_clock/hours.py) and the wording on the first page in [`pdf_report.py`](src/punch_clock/pdf_report.py).
 
@@ -112,8 +106,6 @@ The app stops with a plain message rather than risk a wrong report. It refuses a
 - Jibble break punches, because the fixed lunch can't be mixed with Jibble's break tracking
 - An employee with too many punches to fit on one printed page
 - A folder path too long for Excel to open
-
-It also refuses a review file from a different export, two copies of one supervisor's file, and any other workbook in `Supervisor files`.
 
 A shift that crosses midnight is flagged for review. It may leave that day's hours unavailable, depending on how Jibble dates the punches.
 
@@ -137,13 +129,12 @@ python -m venv .venv
 |---|---|
 | `hours.py` | Pairs punches and applies the gross, lunch and net rules |
 | `jibble_export.py` | Reads the export by its labels and cross-checks the sheets |
+| `supervisor_list.py` | Saves who supervises each department |
 | `assignments.py` | Decides who reviews whom |
-| `pdf_report.py` | Lays out the printable and approved PDFs |
+| `pdf_report.py` | Lays out the printable PDFs |
 | `review_workbook.py` | Writes each supervisor's spreadsheet |
-| `approvals.py` | Reads returned spreadsheets and works out approved hours |
-| `summary_workbook.py` | Writes accounting's summary of approved hours |
 | `validation_report.py` | Writes the validation file |
-| `reports.py` | Runs the two jobs and manages the week's folder |
+| `reports.py` | Makes the week's reports and manages its folder |
 | `app.py` | The window and command line |
 
 ## Packaging

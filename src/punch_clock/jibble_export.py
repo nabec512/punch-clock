@@ -50,13 +50,14 @@ TEAM_LABELS = {
     "Public Holiday OT": "Public Holiday OT",
 }
 
-# "Assembly - Supervisor" means a supervisor of the Assembly department.
+# "Assembly - Supervisor" belongs to the Assembly department. The tag only suggests who
+# supervises it when the department is first set up: the saved supervisor list decides.
 SUPERVISOR_POSITION = re.compile(r"^(.+?)\s*[-–—]\s*supervisor\s*$", re.IGNORECASE)
 
 BREAK_MODEL_MESSAGE = (
-    "This export contains break punches. This tool deducts a fixed lunch instead of using "
-    "Jibble breaks, and the two cannot be mixed. Remove the configured break in Jibble, "
-    "then select an export from a week recorded after that change."
+    "This file has break punches from Jibble. This app takes off a set lunch time instead, "
+    "and it can't do both. Remove the break setting in Jibble, then use a file from a week "
+    "after that change."
 )
 
 
@@ -140,6 +141,7 @@ class WeeklyExport:
     timesheet_rows: int
     entry_rows: int
     column_counts: dict[str, int]
+    supervisors: dict[str, str] = field(default_factory=dict)  # lowercased department to supervisor name
 
     @property
     def dates(self) -> list[date]:
@@ -168,14 +170,14 @@ def load_export(path: str | Path) -> WeeklyExport:
     try:
         workbook = openpyxl.load_workbook(path, data_only=True)
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
-        raise UnsupportedExport(f"{path.name} could not be opened as an Excel workbook.") from error
+        raise UnsupportedExport(f"{path.name} could not be opened. Make sure it's an Excel file.") from error
     return read_workbook(workbook, path.name, hashlib.sha256(data).hexdigest())
 
 
 def read_workbook(workbook, source_name: str, digest: str = "") -> WeeklyExport:
     for sheet in (TIMESHEETS, ENTRIES, TEAM):
         if sheet not in workbook:
-            raise UnsupportedExport(f"Missing worksheet: {sheet}. Export all detailed options from Jibble.")
+            raise UnsupportedExport(f"This file is missing a sheet called {sheet}. Export it from Jibble again with all the options turned on.")
     team_rows = _values(workbook[TEAM])
     timesheet_headers, timesheet_rows = _read_table(workbook[TIMESHEETS], TIMESHEET_COLUMNS)
     entry_headers, entry_rows = _read_table(workbook[ENTRIES], ENTRY_COLUMNS)
@@ -230,7 +232,7 @@ def _minutes(value, where: str) -> Optional[int]:
     match = re.fullmatch(r"(\d+)h\s+(\d{2})m", str(value).strip())
     if not match or int(match[2]) > 59:
         raise UnsupportedExport(
-            f"{where}: unsupported duration {value!r}. Export durations as hours and minutes (e.g. 1h 06m)."
+            f"{where}: can't read the time {value!r}. In Jibble, export times as hours and minutes (for example, 1h 06m)."
         )
     return int(match[1]) * 60 + int(match[2])
 
@@ -249,8 +251,8 @@ def _find_header(rows: Sequence[tuple], required: Sequence[str], sheet: str, sca
     ]
     if len(found) != 1:
         raise UnsupportedExport(
-            f"{sheet}: expected one header row containing {', '.join(required)}. "
-            "Re-export from Jibble with all detailed options."
+            f"{sheet}: some column headings are missing or changed. It needs {', '.join(required)}. "
+            "Export it from Jibble again with all the options turned on."
         )
     return found[0]
 
@@ -260,7 +262,7 @@ def _read_table(sheet, required: Sequence[str]) -> tuple[list[str], list[dict]]:
     header_index, names = _find_header(rows, required, sheet.title)
     labels = [name for name in names if name]
     if len(labels) != len(set(labels)):
-        raise UnsupportedExport(f"{sheet.title}: duplicate column labels.")
+        raise UnsupportedExport(f"{sheet.title}: two columns have the same heading.")
     table = []
     for number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         if any(value is not None and value != "" for value in row):
@@ -275,9 +277,9 @@ def _read_week(team_rows: Sequence[tuple]) -> tuple[str, date]:
     try:
         first, last = (datetime.strptime(part, "%d %B %Y").date() for part in period.split(" - "))
     except (AttributeError, ValueError) as error:
-        raise UnsupportedExport(f"{TEAM}: unreadable reporting week.") from error
+        raise UnsupportedExport(f"{TEAM}: can't tell which week this file covers.") from error
     if first.weekday() != 0 or last - first != timedelta(days=6):
-        raise UnsupportedExport("This tool requires an export of one Monday-Sunday week.")
+        raise UnsupportedExport("This file must cover one full week, Monday to Sunday. Export it from Jibble again.")
     return period, first
 
 
@@ -309,24 +311,24 @@ def _read_employees(rows: list[dict], headers: Sequence[str], dates: list[date])
         where = f"{TIMESHEETS} row {cells['_row']}"
         when = cells["Date"]
         if not isinstance(when, datetime) or when.date() not in dates:
-            raise UnsupportedExport(f"{where}: date outside the reporting week, or invalid.")
+            raise UnsupportedExport(f"{where}: this date isn't valid, or it's outside the week.")
         day = when.date()
         if cells["Day"] != day.strftime("%A"):
-            raise UnsupportedExport(f"{where}: weekday disagrees with date.")
+            raise UnsupportedExport(f"{where}: the day of the week doesn't match the date.")
         code, name = _text(cells["Member Code"]), _text(cells["Full Name"])
         if not code or not name:
-            raise UnsupportedExport(f"{where}: missing member code or name; cannot safely match the employee.")
+            raise UnsupportedExport(f"{where}: the employee's member code or name is missing.")
         employee = employees.setdefault(code, Employee(code, name))
         if employee.name != name:
-            raise UnsupportedExport(f"{where}: conflicting names for member code {code}.")
+            raise UnsupportedExport(f"{where}: member code {code} has two different names.")
         if day in employee.days:
-            raise UnsupportedExport(f"{where}: duplicate employee/date {code} {day}.")
+            raise UnsupportedExport(f"{where}: employee {code} appears twice for {day}.")
         if any(cells.get(column) not in (None, "") for column in break_columns):
             raise UnsupportedExport(BREAK_MODEL_MESSAGE)
         positions[code].add(_text(cells["Position"]))
         for column in ("First In", "Last Out"):
             if cells[column] is not None and not isinstance(cells[column], datetime):
-                raise UnsupportedExport(f"{where}: unsupported timestamp in {column}.")
+                raise UnsupportedExport(f"{where}: can't read the time in {column}.")
         employee.days[day] = DayRecord(
             day=day,
             row=cells["_row"],
@@ -336,7 +338,7 @@ def _read_employees(rows: list[dict], headers: Sequence[str], dates: list[date])
         )
     for code, employee in employees.items():
         if len(positions[code]) > 1:
-            raise UnsupportedExport(f"{code}: conflicting position values in the week.")
+            raise UnsupportedExport(f"{code} has more than one position this week. Fix this in Jibble, then export again.")
         employee.position = next(iter(positions[code]))
     return employees
 
@@ -352,20 +354,20 @@ def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: lis
         if "break" in kind.casefold():
             raise UnsupportedExport(BREAK_MODEL_MESSAGE)
         if kind not in ("In", "Out"):
-            raise UnsupportedExport(f"{where}: unsupported entry type {kind!r}.")
+            raise UnsupportedExport(f"{where}: unknown entry type {kind!r}. Only In and Out can be used.")
         if (
             code not in employees
             or not isinstance(when, datetime)
             or when.date() not in dates
             or not isinstance(time, datetime)
         ):
-            raise UnsupportedExport(f"{where}: unknown employee or date, or missing timestamp.")
+            raise UnsupportedExport(f"{where}: the employee, date or time is missing or not recognized.")
         if _text(cells["Full Name"]) != employees[code].name:
-            raise UnsupportedExport(f"{where}: employee name disagrees with {TIMESHEETS}.")
+            raise UnsupportedExport(f"{where}: the employee's name doesn't match the {TIMESHEETS} sheet.")
         zones.add(_text(cells["Timezone"]))
         punches[(code, when.date())].append(Punch(kind, time, _text(cells.get("Notes")), cells["_row"]))
     if len(zones) > 1 or "" in zones:
-        raise UnsupportedExport("Mixed or missing punch timezones need review before a report can be made.")
+        raise UnsupportedExport("Some punches have different or missing time zones, so a report can't be made.")
     for (code, day), day_punches in punches.items():
         record = employees[code].days.setdefault(day, DayRecord(day=day))
         record.punches = sorted(day_punches, key=lambda p: (p.time, p.row))
@@ -427,10 +429,10 @@ def _check_individual_sheets(workbook, employees: dict[str, Employee], dates: li
     sheets = _individual_sheets(workbook)
     unknown = set(sheets) - set(employees)
     if unknown:
-        raise UnsupportedExport(f"Individual summary for an unknown member code: {', '.join(sorted(unknown))}.")
+        raise UnsupportedExport(f"Found an employee sheet for an unknown member code: {', '.join(sorted(unknown))}.")
     for code, employee in employees.items():
         if len(sheets.get(code, [])) != 1:
-            raise UnsupportedExport(f"{code}: missing or duplicate individual summary sheet.")
+            raise UnsupportedExport(f"{code}: this employee's own sheet is missing or appears twice.")
         _check_individual_sheet(sheets[code][0], employee, dates, checks)
 
 
@@ -449,7 +451,7 @@ def _check_individual_sheet(sheet, employee: Employee, dates: list[date], checks
         if isinstance(when, datetime):
             daily[when.date()] = row
     if set(daily) != set(dates) or total_row is None:
-        raise UnsupportedExport(f"{sheet.title}: unexpected daily date layout.")
+        raise UnsupportedExport(f"{sheet.title}: the dates aren't laid out as expected.")
     for day in dates:
         record = employee.days[day]
         row = daily[day]
@@ -479,10 +481,10 @@ def _check_team_summary(team_rows: Sequence[tuple], employees: dict[str, Employe
         if row[type_column] == "Payroll Hours":
             code = _text(row[code_column])
             if code in stated:
-                raise UnsupportedExport(f"Duplicate employee in {TEAM}: {code}.")
+                raise UnsupportedExport(f"{TEAM}: employee {code} is listed twice.")
             stated[code] = _team_minutes(row[total_column], f"{TEAM} total for {code}")
     if set(stated) != set(employees):
-        raise UnsupportedExport(f"Employee roster differs between {TEAM} and {TIMESHEETS}.")
+        raise UnsupportedExport(f"The list of employees is different in the {TEAM} and {TIMESHEETS} sheets.")
     for code, value in stated.items():
         check = Check(f"{code} payroll vs Team Summary employee total", employees[code].total("Payroll Hours"), value)
         checks.append(check)
@@ -492,7 +494,7 @@ def _check_team_summary(team_rows: Sequence[tuple], employees: dict[str, Employe
     for metric, label in TEAM_LABELS.items():
         matches = [row for row in body if row[type_column] == label]
         if len(matches) != 1:
-            raise UnsupportedExport(f"{TEAM}: missing total for {label}.")
+            raise UnsupportedExport(f"{TEAM}: the total for {label} is missing.")
         team_total = _team_minutes(matches[0][total_column], f"{TEAM} {label}")
         employee_sum = weekly_total(e.total(metric) for e in employees.values())
         checks.append(Check(f"Team {label}: employee sum vs Jibble team total", employee_sum, team_total))

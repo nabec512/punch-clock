@@ -69,11 +69,8 @@ $app = Start-Process -FilePath 'dist\PunchClock\PunchClock.exe' -ArgumentList "`
 if ($app.ExitCode -ne 0) { throw "The packaged app exited with code $($app.ExitCode)." }
 $week = Get-ChildItem $smoke -Directory | Select-Object -First 1
 if (-not $week) { throw 'The packaged app did not create the output folder.' }
-if (-not (Get-ChildItem $week.FullName -Filter 'Printable timesheets*.pdf')) { throw 'The packaged app did not create the PDF.' }
+if (-not (Get-ChildItem (Join-Path $week.FullName 'Supervisor files') -Filter '*Printable.pdf')) { throw 'The packaged app did not create the PDFs.' }
 if (-not (Get-ChildItem (Join-Path $week.FullName 'Supervisor files') -Filter '*.xlsx')) { throw 'The packaged app did not create the review files.' }
-$app = Start-Process -FilePath 'dist\PunchClock\PunchClock.exe' -ArgumentList '--approve', "`"$($week.FullName)`"" -Wait -PassThru
-if ($app.ExitCode -ne 0) { throw "The packaged app exited with code $($app.ExitCode) when building the approved report." }
-if (-not (Get-ChildItem $week.FullName -Filter 'Provisional timesheets*.pdf')) { throw 'The packaged app did not create the provisional report.' }
 
 $archive = "dist\PunchClock-$version-windows.zip"
 # Antivirus can hold the app's files briefly just after the smoke test has run them.

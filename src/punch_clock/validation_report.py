@@ -35,8 +35,7 @@ def build_validation_text(export: WeeklyExport) -> str:
         "Break events are not supported: the fixed lunch replaces Jibble break tracking, "
         "so exports containing them are rejected.",
         "Gross = sum of In/Out sessions rounded once per day to the nearest minute.",
-        "Net = gross minus min(remaining lunch, gross) on worked days. Remaining lunch = 30 minutes less "
-        "that day's clocked-out gaps, added and rounded once to the nearest minute.",
+        "Net = gross minus min(30 minutes, gross) on worked days. Clocked-out gaps don't reduce the lunch.",
         "Incomplete sequences remain unavailable. Source payroll checks below retain Jibble values.",
         "Overtime = Daily OT + Daily Double OT + Weekly OT + Rest Day OT + Public Holiday OT.",
         "Zero is preserved. Blank duration propagates as MISSING, never zero. NR means no timestamp.",
@@ -63,8 +62,8 @@ def build_validation_text(export: WeeklyExport) -> str:
     lines += ["", "REVIEW FILES"]
     for group in review_groups(export):
         lines.append(f"{group.title}: {len(group.employees)} employees")
-    lines.append(f"Departments with no tagged supervisor: {', '.join(departments_without_supervisor(export)) or 'None'}")
-    lines.append("Supervisors review their own hours along with their department's.")
+    lines.append(f"Departments with no supervisor: {', '.join(departments_without_supervisor(export)) or 'None'}")
+    lines.append("Supervisors come from the list saved in Punch Clock, not from Jibble positions.")
     lines += ["", "EMPLOYEE NOTES"]
     for employee in export.employees:
         lines.append(f"{employee.name} / {employee.code} / {employee.position or 'MISSING POSITION'}")
