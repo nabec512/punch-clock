@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 
+
+Second release.
+- Simplification of the application and excel 
+- Split view of pdf and excel per supervisor
+- Ability to set the supervisor of each dept in the app instead of relying on the `- Supervisor` tag.
+
 ## 0.1.0
 
 First packaged release.
