@@ -35,6 +35,10 @@ Or download `PunchClock-<version>-windows.zip`, extract the whole folder, and ru
 
 The app isn't code-signed yet, so Windows may show a SmartScreen warning the first time. To continue, choose **More info**, then **Run anyway**. You can check your download against `SHA256SUMS.txt` in the release.
 
+## Tablet setup
+
+To set up an Android tablet as a shared time clock, follow the [tablet setup guide](docs/tablet-setup.md). It covers the Jibble kiosk, locking the tablet down with FreeKiosk, USB troubleshooting, tests to run and how to recover it.
+
 ## What to export from Jibble
 
 Export one full Monday to Sunday week from Timesheets as XLSX, with durations in hours and minutes (for example `1h 06m`). Turn on all three options:
