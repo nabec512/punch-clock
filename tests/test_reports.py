@@ -50,6 +50,7 @@ def test_every_punch_and_total_is_printed(tmp_path):
 def test_multiple_sessions_gap_and_note_are_explained(tmp_path):
     text = report_text(make_report(tmp_path))
     assert "clocked out 11:30:20-12:45:05 (1:15); already excluded from gross. 0:30 lunch also deducted." in text
+    assert "swapped" not in text
     assert 'Jibble note: "dentist appointment"' in text
 
 
@@ -168,7 +169,7 @@ def test_repository_tracks_no_exports_or_reports():
     if not shutil.which("git") or not (REPO_ROOT / ".git").exists():
         pytest.skip("not a git checkout")
     result = subprocess.run(
-        ["git", "ls-files", "--cached", "*.xlsx", "*.xls", "*.xlsm", "*.csv", "*.pdf", "*.validation.txt"],
+        ["git", "ls-files", "--cached", "*.xlsx", "*.xls", "*.xlsm", "*.csv", "*.pdf", "*.validation.txt", "private/*", "*settings*.json"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

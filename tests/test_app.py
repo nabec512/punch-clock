@@ -1,11 +1,10 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
 import pytest
-from sample_export import build_workbook
+from sample_export import Person, build_workbook, write_settings
 
-from punch_clock.jibble_export import read_workbook
-from punch_clock import __version__, app, supervisor_list
+from punch_clock.reports import process_export
+from punch_clock import __version__, app, settings
 
 
 @pytest.fixture
@@ -13,7 +12,6 @@ def dialogs(monkeypatch):
     """Replace the message boxes, recording what the user would have seen."""
     seen = {"error": []}
     monkeypatch.setattr(messagebox, "showerror", lambda title, text, parent: seen["error"].append((title, text)))
-    monkeypatch.setattr(app, "edit_supervisors", lambda parent, export=None: True)
     return seen
 
 
@@ -32,12 +30,13 @@ def test_process_through_the_dialogs(monkeypatch, dialogs, tmp_path):
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)
     choose_file(monkeypatch, source)
-    supervisor_list.save({"Assembly": "Avery Lee", "Receiving": ""})
+    write_settings(settings.file_path(), {"Assembly": "Avery Lee", "Receiving": ""})
     processed = app.choose_and_process(None)
     assert len(processed.pdfs) == 2 and all(pdf.exists() for pdf in processed.pdfs)
     summary = app.process_summary(processed)
     assert "3 employees" in summary and "Riley Chen" in summary and "Avery Lee: 2 employees" in summary
-    assert "Missing supervisor: 1 employee" in summary and "accounting reviews" in summary
+    assert "Missing supervisor: 1 employee" in summary and "no supervisor for: Receiving" in summary
+    assert "Accounting reviews" in summary
 
     assert dialogs == {"error": []}
 
@@ -53,81 +52,80 @@ def test_mismatches_are_called_out_in_the_summary(monkeypatch, dialogs, tmp_path
     assert "1 total doesn't match Jibble." in app.process_summary(app.choose_and_process(None))
 
 
-def test_a_new_department_is_asked_about_before_making_reports(monkeypatch, dialogs, tmp_path):
+def _summary(tmp_path, punches):
+    source = tmp_path / "export.xlsx"
+    build_workbook([Person("Ann", "A-1", "Paint", punches)]).save(source)
+    return app.process_summary(process_export(source))
+
+
+FULL_DAY = [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")]
+
+
+def test_summary_names_who_is_missing_a_punch_and_who_may_be_swapped(tmp_path):
+    summary = _summary(tmp_path, [*FULL_DAY, (1, "In", "08:00:00", ""), (2, "Out", "07:30:00", "")])
+    assert "Ann: Tue, Wed" in summary
+    assert "may be swapped for: Ann" in summary
+
+
+@pytest.mark.parametrize(
+    "punches",
+    [
+        pytest.param(FULL_DAY, id="normal"),
+        pytest.param(
+            [*FULL_DAY, (1, "Out", "08:00:10", ""), (1, "In", "08:00:20", ""), (1, "Out", "16:30:00", "")],
+            id="already fixed by punching twice",
+        ),
+    ],
+)
+def test_summary_says_nothing_when_back_in_sync(tmp_path, punches):
+    assert "swapped" not in _summary(tmp_path, punches)
+
+
+def _mismatched_summary(tmp_path, punches):
+    source = tmp_path / "export.xlsx"
+    workbook = build_workbook([Person("Ann", "A-1", "Paint", punches)])
+    sheet = workbook["Team Summary"]
+    row = next(c.row for c in sheet["C"] if c.value == "Payroll")
+    sheet[f"K{row}"] = "1h 00m"
+    workbook.save(source)
+    return app.process_summary(process_export(source))
+
+
+def test_summary_explains_mismatches_only_when_a_punch_was_forgotten(tmp_path):
+    assert "forgotten punch can cause this" in _mismatched_summary(tmp_path, [(0, "In", "08:00:00", "")])
+    (tmp_path / "plain").mkdir()
+    assert "forgotten punch" not in _mismatched_summary(tmp_path / "plain", FULL_DAY)
+
+
+def _choose_settings(monkeypatch, chosen):
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **_: str(chosen))
+    return app.choose_settings_file(None)
+
+
+def test_cancelling_the_settings_file_picker_changes_nothing(monkeypatch, dialogs):
+    before = settings.file_path()
+    assert _choose_settings(monkeypatch, "") is None
+    assert settings.file_path() == before and dialogs == {"error": []}
+
+
+def test_choosing_a_settings_file_is_used_for_the_next_reports(monkeypatch, dialogs, tmp_path):
+    chosen = tmp_path / "shared" / "my settings.json"
+    chosen.parent.mkdir()
+    write_settings(chosen, {"Assembly": "Morgan Blake"})
+    assert _choose_settings(monkeypatch, chosen.as_posix()) == chosen
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)
-    choose_file(monkeypatch, source)
-    asked = []
-    monkeypatch.setattr(app, "edit_supervisors", lambda parent, export=None: asked.append(export) or False)
-    assert app.choose_and_process(None) is None  # cancelling makes no reports
-    assert len(asked) == 1
-    assert [p.name for p in tmp_path.iterdir()] == ["export.xlsx"]
+    assert "Morgan Blake: 2 employees" in app.process_summary(process_export(source))
+    assert dialogs == {"error": []}
 
 
-def test_known_departments_are_not_asked_about_again(monkeypatch, dialogs, tmp_path):
-    source = tmp_path / "export.xlsx"
-    build_workbook().save(source)
-    choose_file(monkeypatch, source)
-    supervisor_list.save({"assembly": "Avery Lee", "Receiving": ""})  # a blank is still an answer
-    monkeypatch.setattr(app, "edit_supervisors", lambda parent, export=None: pytest.fail("asked again"))
-    assert app.choose_and_process(None)
-
-
-def _in_window(root, press, fill=None):
-    """Run once the dialog is open: change its boxes, then press one of its buttons."""
-
-    def walk(widget):
-        for child in widget.winfo_children():
-            yield child
-            yield from walk(child)
-
-    def act():
-        widgets = list(walk(root))
-        boxes = [w for w in widgets if isinstance(w, ttk.Combobox)]
-        if fill:
-            fill(boxes)
-        next(w for w in widgets if isinstance(w, ttk.Button) and w.cget("text") == press).invoke()
-
-    root.after(100, act)
-
-
-@pytest.fixture(scope="module")
-def tk_root():
-    """Shared, as the app has only one: creating Tk repeatedly in one process fails now and then."""
-    root = tk.Tk()
-    yield root
-    root.destroy()
-
-
-def test_saving_the_window_stores_names_and_blanks(tk_root):
-    export = read_workbook(build_workbook(), "sample.xlsx")
-    seen = []
-
-    def fill(boxes):
-        seen.extend(box.get() for box in boxes)
-        boxes[1].set("  Dana Smith ")
-
-    _in_window(tk_root, "Save", fill)
-    assert app.edit_supervisors(tk_root, export) is True
-    assert seen == ["Avery Lee", ""]  # the "- Supervisor" position fills in the first guess
-    assert supervisor_list.load() == {"Assembly": "Avery Lee", "Receiving": "Dana Smith"}
-
-
-def test_saved_blank_is_not_replaced_by_the_position_guess(tk_root):
-    supervisor_list.save({"Assembly": ""})
-    export = read_workbook(build_workbook(), "sample.xlsx")
-    seen = []
-    _in_window(tk_root, "Cancel", lambda boxes: seen.extend(box.get() for box in boxes))
-    assert app.edit_supervisors(tk_root, export) is False
-    assert seen == ["", ""]
-    assert supervisor_list.load() == {"Assembly": ""}  # cancelling changes nothing
-
-
-def test_opening_the_list_before_any_export_explains_itself(tk_root, monkeypatch):
-    shown = []
-    monkeypatch.setattr(messagebox, "showinfo", lambda title, text, parent: shown.append(text))
-    assert app.edit_supervisors(tk_root) is False
-    assert "after you choose a Jibble file" in shown[0]
+def test_choosing_a_bad_settings_file_explains_and_changes_nothing(monkeypatch, dialogs, tmp_path):
+    before = settings.file_path()
+    chosen = tmp_path / "bad.json"
+    chosen.write_text("not json")
+    assert _choose_settings(monkeypatch, chosen) is None
+    assert "has a mistake in it" in dialogs["error"][0][1]
+    assert settings.file_path() == before
 
 
 def test_unusable_export_shows_a_plain_message(monkeypatch, dialogs, tmp_path):

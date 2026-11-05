@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+Handles forgotten punches, pays by work schedules, and moves supervisors and schedules out of the app.
+- A forgotten punch no longer skews the week: each day's punches are paired in time order, and a day with an odd number of punches asks for the hours.
+- Pay follows each department's or person's schedule: time before the start isn't paid, arriving up to 5 minutes late counts as on time, and under 15 minutes past the end of the day isn't paid.
+- Overtime is worked out by the app instead of coming from Jibble. It starts 15 minutes past the scheduled hours, and all hours on a scheduled day off are overtime.
+- Supervisors and schedules now come from one settings file outside the app, read once each time reports are made. The app looks in the home folder, and **Settings file...** points each PC to another location. This replaces the Supervisors window, so **the settings file must be set up before the first reports on each PC**.
+- If the settings file can't be reached, the app uses its last saved copy and says so on the reports.
+- Test accounts are left out of the reports.
+
 ## 0.3.0 
 
 Adds the auto-updater to the app

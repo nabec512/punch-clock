@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Optional
 
 from pypdf import PdfReader
 
-from punch_clock import supervisor_list
+from punch_clock import settings
 from punch_clock.assignments import ReviewGroup, printable_file_name, review_file_name, review_groups, with_supervisors
 from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, load_export
 from punch_clock.pdf_report import page_count, render
@@ -74,10 +74,12 @@ def process_export(
 ) -> ProcessResult:
     """Create the week's output folder beside the export, or inside ``parent``.
 
-    Reviewers come from ``supervisors``, or from the saved list if none are given.
+    Reviewers come from ``supervisors``, or from the settings file if none are given.
     """
     source = Path(source)
-    export = with_supervisors(load_export(source), supervisor_list.load() if supervisors is None else supervisors)
+    current = settings.load()
+    export = with_supervisors(load_export(source, current.schedule_for), current.supervisors if supervisors is None else supervisors)
+    export = replace(export, settings_note=current.note)
     groups = tuple(review_groups(export))
     folder = _new_folder(Path(parent) if parent else source.parent, output_folder_name(export))
     _check_path_lengths(folder, export, groups)

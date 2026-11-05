@@ -4,9 +4,9 @@ from datetime import date, datetime
 import openpyxl
 import pytest
 from pypdf import PdfReader
-from sample_export import Person, build_workbook
+from sample_export import Person, build_workbook, write_settings
 
-from punch_clock import reports, supervisor_list
+from punch_clock import reports, settings
 from punch_clock.assignments import (
     departments_without_supervisor,
     review_file_name,
@@ -40,7 +40,7 @@ def crew():
 
 @pytest.fixture(autouse=True)
 def paint_has_a_supervisor():
-    supervisor_list.save({"Paint": "Bea Boss"})
+    write_settings(settings.file_path(), {"Paint": "Bea Boss"})
 
 
 @pytest.fixture
@@ -88,19 +88,18 @@ class Sheet:
 def test_supervisor_tag_is_part_of_position_not_department(tmp_path):
     export = _export(tmp_path, crew())
     boss = next(e for e in export.employees if e.code == "BB-1")
-    assert boss.position == "Paint - Supervisor" and boss.department == "Paint" and boss.is_supervisor
+    assert boss.position == "Paint - Supervisor" and boss.department == "Paint"
 
 
 @pytest.mark.parametrize("position", ["Paint-Supervisor", "Paint - supervisor", "Paint – Supervisor", "Paint  -  SUPERVISOR "])
 def test_supervisor_tag_variants_are_recognised(tmp_path, position):
     export = _export(tmp_path, [worked("A", "A-1", position), worked("B", "B-1", "Paint")])
     assert {e.department for e in export.employees} == {"Paint"}
-    assert next(e for e in export.employees if e.code == "A-1").is_supervisor
 
 
-def test_a_position_merely_containing_the_word_is_not_a_supervisor(tmp_path):
+def test_a_position_merely_containing_the_word_keeps_its_name(tmp_path):
     export = _export(tmp_path, [worked("A", "A-1", "Supervisor"), worked("B", "B-1", "Supervisor Training")])
-    assert not any(e.is_supervisor for e in export.employees)
+    assert {e.department for e in export.employees} == {"Supervisor", "Supervisor Training"}
 
 
 def test_each_supervisor_gets_only_their_department(tmp_path):
@@ -121,7 +120,7 @@ def test_everyone_without_a_supervisor_shares_one_group(tmp_path):
 
 
 def test_position_tag_alone_no_longer_makes_a_supervisor(tmp_path):
-    supervisor_list.save({})
+    write_settings(settings.file_path())
     groups = review_groups(_export(tmp_path, crew()))
     assert [g.title for g in groups] == ["Missing supervisor"]
 
@@ -146,19 +145,6 @@ def test_one_person_covering_two_departments_gets_one_set_of_files(tmp_path):
     assert [[e.code for e in g.employees] for g in result.groups] == [["D-1", "G-1"]]
     first = " ".join(PdfReader(result.pdfs[0]).pages[0].extract_text().split())
     assert "Packing 1 1" in first and "Shipping 1 1" in first and "Total 2 2" in first
-
-
-def test_a_damaged_list_stops_with_a_plain_message(tmp_path):
-    supervisor_list.list_path().write_text("not json")
-    source = tmp_path / "export.xlsx"
-    build_workbook(crew()).save(source)
-    with pytest.raises(UnsupportedExport, match="supervisor list could not be read"):
-        process_export(source)
-
-
-def test_saved_list_survives_a_round_trip():
-    supervisor_list.save({"Łódź": "Żak", "Packing": ""})
-    assert supervisor_list.load() == {"Łódź": "Żak", "Packing": ""}
 
 
 def test_supervisor_alone_in_a_department_still_gets_a_file(tmp_path):
@@ -209,7 +195,7 @@ def test_excel_lists_the_group_as_missing_a_supervisor(processed):
 
 def test_a_long_list_of_departments_is_shortened_in_file_names(tmp_path):
     people = [worked(f"Worker {i}", f"W-{i}", f"Department number {i}") for i in range(6)]
-    supervisor_list.save({f"Department number {i}": "Dana Smith" for i in range(6)})
+    write_settings(settings.file_path(), {f"Department number {i}": "Dana Smith" for i in range(6)})
     export = _export(tmp_path, people)
     assert review_file_name(review_groups(export)[0], export) == "Dana Smith - Department number 0 and 5 more - 2026-03-02.xlsx"
 
@@ -221,7 +207,7 @@ def test_file_names_are_safe_for_windows():
 def _export(tmp_path, people):
     path = tmp_path / "e.xlsx"
     build_workbook(people).save(path)
-    return with_supervisors(load_export(path), supervisor_list.load())
+    return with_supervisors(load_export(path), settings.load().supervisors)
 
 
 # --- Output folder --------------------------------------------------------------
@@ -348,6 +334,128 @@ def test_reviewed_starts_at_no_with_a_yes_no_list_on_the_week_total_only(process
     assert all(v.formula1 == '"Yes,No"' for v in lists)
     assert len(lists) == 3  # one per employee
     assert sheet.sheet.cell(sheet.row_for("Ann Painter", MONDAY), sheet.columns[REVIEWED]).value is None
+
+
+# --- Forgotten punches ---------------------------------------------------------
+
+
+def shift(*days, kinds=("In", "Out")):
+    return [(day, kind, clock, "") for day in days for kind, clock in zip(kinds, ("08:00:00", "16:30:00"))]
+
+
+SWAPPED = ("Out", "In")
+ONE_FORGOTTEN = [*shift(0), (1, "In", "08:00:00", ""), *shift(2, 3, 4, kinds=SWAPPED)]
+TWO_FORGOTTEN = [*shift(0), (1, "In", "08:00:00", ""), *shift(2, kinds=SWAPPED), (3, "Out", "08:00:00", ""), *shift(4)]
+CARRIED_OVER = shift(0, 1, 2, 3, 4, kinds=SWAPPED)
+FIXED_NEXT_MORNING = [
+    *shift(0), (1, "In", "08:00:00", ""),
+    (2, "Out", "08:00:10", ""), (2, "In", "08:00:20", ""), (2, "Out", "16:30:00", ""), *shift(3, 4),
+]
+
+
+@pytest.mark.parametrize(
+    "punches, needs_a_person",
+    [
+        pytest.param(ONE_FORGOTTEN, ["Tue"], id="one forgotten clock-out"),
+        pytest.param(TWO_FORGOTTEN, ["Tue", "Thu"], id="two forgotten clock-outs"),
+        pytest.param(CARRIED_OVER, [], id="swapped since last week"),
+        pytest.param(FIXED_NEXT_MORNING, ["Tue"], id="fixed by punching twice"),
+    ],
+)
+def test_a_forgotten_punch_only_costs_the_day_it_happened(tmp_path, punches, needs_a_person):
+    export = _export(tmp_path, [Person("Ann", "A-1", "Paint", punches)])
+    ann = export.employees[0]
+    worked_days = export.dates[:5]
+    assert [f"{d:%a}" for d in worked_days if ann.days[d].hours.gross is None] == needs_a_person
+    for d in worked_days:
+        if f"{d:%a}" not in needs_a_person:
+            assert ann.days[d].hours.net == 480
+
+
+def test_swapped_days_raise_no_false_alarms_and_explain_themselves(tmp_path):
+    source = tmp_path / "export.xlsx"
+    build_workbook([Person("Ann", "A-1", "Paint", ONE_FORGOTTEN)]).save(source)
+    result = process_export(source)
+    wednesday = load_export(source).employees[0].days[date(2026, 3, 4)]
+    assert wednesday.issues == []
+
+    sheet = Sheet(review_file(result, "Bea Boss"))
+    row = sheet.row_for("Ann", date(2026, 3, 4))
+    assert "swapped" in sheet.sheet.cell(row, sheet.columns["Notes"]).value
+    assert sheet.sheet.cell(row, sheet.columns["Clock in"]).value == "8:00 AM"
+    assert sheet.sheet.cell(row, sheet.columns["Clock out"]).value == "4:30 PM"
+    assert not sheet.sheet.cell(row, sheet.columns[ADJUSTMENT]).protection.locked  # a normal day, not an orange one
+    assert sheet.sheet.cell(row, sheet.columns[APPROVED]).protection.locked
+    assert "swapped" in " ".join(pdf_text(result, "Bea Boss").split())
+
+
+# --- Overtime -------------------------------------------------------------------
+
+
+def _overtime_file(tmp_path, punches):
+    source = tmp_path / "export.xlsx"
+    build_workbook([Person("Ann", "A-1", "Paint", punches)]).save(source)
+    path = review_file(process_export(source), "Bea Boss")
+    return Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
+
+
+def test_overtime_comes_from_approved_hours_not_jibble(tmp_path):
+    long_day = [(0, "In", "08:00:00", ""), (0, "Out", "17:00:00", "")]
+    formulas, values = _overtime_file(tmp_path, long_day)
+    row = formulas.row_for("Ann", MONDAY)
+    cell = formulas.sheet.cell(row, formulas.columns["Overtime"])
+    assert "1440" in cell.value and "480" in cell.value and cell.protection.locked
+    assert round(_as_minutes(values.cell(row, formulas.columns["Overtime"]).value)) == 30
+    total = formulas.row_for("Ann", WEEK_TOTAL)
+    assert round(_as_minutes(values.cell(total, formulas.columns["Overtime"]).value)) == 30
+    assert "Jibble overtime" not in formulas.columns
+
+
+def test_schedule_sets_approved_hours_and_explains_itself(tmp_path):
+    source = tmp_path / "export.xlsx"
+    punches = [(0, "In", "07:40:00", ""), (0, "Out", "16:30:00", "")]
+    build_workbook([Person("Ann", "A-1", "Day Shift", punches)]).save(source)
+    write_settings(settings.file_path(), {"Day Shift": "Bea Boss"}, {"Day Shift": {"start": "08:00", "end": "16:30"}})
+    path = review_file(process_export(source), "Bea Boss")
+    formulas, values = Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
+    row = formulas.row_for("Ann", MONDAY)
+    assert round(_as_minutes(values.cell(row, formulas.columns["Net"]).value)) == 500  # what the punches say
+    assert round(_as_minutes(values.cell(row, formulas.columns[APPROVED]).value)) == 480  # what the schedule pays
+    assert "8:00 AM to 4:30 PM" in formulas.sheet.cell(row, formulas.columns["Notes"]).value
+    total = formulas.row_for("Ann", WEEK_TOTAL)
+    assert round(_as_minutes(values.cell(total, formulas.columns[APPROVED]).value)) == 480
+
+
+def test_overtime_formula_uses_that_days_scheduled_hours(tmp_path):
+    source = tmp_path / "export.xlsx"
+    punches = [(0, "In", "07:00:00", ""), (0, "Out", "17:45:00", ""), (4, "In", "07:00:00", ""), (4, "Out", "11:00:00", "")]
+    build_workbook([Person("Ann", "A-1", "Long Shift", punches)]).save(source)
+    long_shift = {"start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"]}
+    write_settings(settings.file_path(), {"Long Shift": "Bea Boss"}, {"Long Shift": long_shift})
+    path = review_file(process_export(source), "Bea Boss")
+    formulas, values = Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
+    monday = formulas.row_for("Ann", MONDAY)
+    friday = formulas.row_for("Ann", date(2026, 3, 6))
+    assert "-600" in formulas.sheet.cell(monday, formulas.columns["Overtime"]).value
+    assert round(_as_minutes(values.cell(monday, formulas.columns["Overtime"]).value)) == 15
+    assert "-0" in formulas.sheet.cell(friday, formulas.columns["Overtime"]).value
+    assert round(_as_minutes(values.cell(friday, formulas.columns["Overtime"]).value)) == 210  # a day off: all of it
+    assert "Day off" in formulas.sheet.cell(friday, formulas.columns["Notes"]).value
+    thursday = formulas.row_for("Ann", date(2026, 3, 5))
+    assert "No punches" in formulas.sheet.cell(thursday, formulas.columns["Notes"]).value
+
+
+def test_incomplete_days_hold_overtime_until_hours_are_typed(tmp_path):
+    formulas, values = _overtime_file(tmp_path, [(0, "In", "08:00:00", "")])
+    total = formulas.row_for("Ann", WEEK_TOTAL)
+    assert values.cell(total, formulas.columns["Overtime"]).value == "Needs hours"
+
+
+def test_pdf_shows_overtime_worked_out_from_punches(tmp_path):
+    source = tmp_path / "export.xlsx"
+    build_workbook([Person("Ann", "A-1", "Paint", [(0, "In", "08:00:00", ""), (0, "Out", "17:00:00", "")])]).save(source)
+    text = pdf_text(process_export(source), "Bea Boss")
+    assert "Overtime 0:30" in text and "Jibble OT" not in text
 
 
 def test_formulas_store_their_results_for_previews(processed):

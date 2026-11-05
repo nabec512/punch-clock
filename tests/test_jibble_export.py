@@ -40,6 +40,21 @@ def test_selection_is_position_then_name_and_excludes_blank_positions():
     assert [e.code for e in export.excluded] == ["RC-1"]
 
 
+def test_test_accounts_are_left_out_but_still_reconciled():
+    workbook = build_workbook()
+    sheet = workbook["Raw Timesheets"]
+    code, position = column_letter(sheet, "Member Code"), column_letter(sheet, "Position")
+    for row in range(3, sheet.max_row + 1):
+        if sheet[f"{code}{row}"].value == "SO-1":
+            sheet[f"{position}{row}"] = "test"
+    export = read(workbook)
+    assert [e.code for e in export.included] == ["AL-1", "LZ-1"]
+    assert [e.code for e in export.test_accounts] == ["SO-1"]
+    assert [e.code for e in export.excluded] == ["RC-1"]
+    assert any(c.label.startswith("SO-1 payroll vs Team Summary") for c in export.checks)
+    assert not any(c.label.startswith("SO-1") and "calculated gross" in c.label for c in export.checks)
+
+
 def test_whitespace_position_counts_as_blank():
     workbook = build_workbook()
     sheet = workbook["Raw Timesheets"]
@@ -59,13 +74,14 @@ def test_calculated_gross_is_compared_to_jibble_payroll():
     assert any("calculated gross vs Jibble payroll" in label for label in failed)
 
 
-def test_overtime_sums_all_five_categories_once():
+def test_overtime_columns_from_jibble_are_not_needed():
     workbook = build_workbook()
     sheet = workbook["Raw Timesheets"]
-    row = first_row_for(sheet, "AL-1")
-    sheet[f"{column_letter(sheet, 'Daily OT')}{row}"] = "0h 30m"
-    sheet[f"{column_letter(sheet, 'Weekly OT')}{row}"] = "1h 00m"
-    assert employee(read(workbook), "AL-1").overtime == 90
+    labels = [cell.value for cell in sheet[2]]
+    for label in ("Daily OT", "Weekly OT"):
+        sheet.delete_cols(labels.index(label) + 1)
+        labels = [cell.value for cell in sheet[2]]
+    assert read(workbook).employees
 
 
 def test_blank_duration_is_missing_not_zero():
@@ -91,7 +107,7 @@ def test_incomplete_punches_are_flagged():
     people[1].punches = [(0, "In", "08:00:00", "")]
     export = read(build_workbook(people))
     record = employee(export, "SO-1").days[date(2026, 3, 2)]
-    assert "Final clock-out is missing." in record.issues
+    assert any("Only one punch" in issue for issue in record.issues)
     assert record.hours.gross is None
 
 

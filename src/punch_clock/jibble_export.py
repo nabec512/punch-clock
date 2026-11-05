@@ -13,46 +13,40 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
-from punch_clock.hours import DayHours, Punch, calculate_day, pair_punches, weekly_total
+from punch_clock.hours import DayHours, Punch, Schedule, calculate_day, pair_punches, weekly_total
 
-OVERTIME = ["Daily OT", "Daily Double OT", "Weekly OT", "Rest Day OT", "Public Holiday OT"]
 BREAKS = ["Break Hours (paid)", "Break Hours (unpaid)"]
-METRICS = ["Payroll Hours", "Regular Hours", *OVERTIME, *BREAKS, "Paid Time Off"]
+METRICS = ["Payroll Hours", "Regular Hours", *BREAKS, "Paid Time Off"]
 TIMESHEET_COLUMNS = ["Date", "Day", "Full Name", "Member Code", "Position", "First In", "Last Out", *METRICS]
 ENTRY_COLUMNS = ["Date", "Full Name", "Member Code", "Entry Type", "Time", "Timezone"]
 
 TIMESHEETS, ENTRIES, TEAM = "Raw Timesheets", "Raw Time Entries", "Team Summary"
 
+ScheduleLookup = Callable[[str, str], Optional[Schedule]]  # by member code and department
+
 # Metric name -> column label on an individual employee summary sheet.
 INDIVIDUAL_LABELS = {
     "Payroll Hours": "PAYROLL HRS",
     "Regular Hours": "REG. HRS",
-    "Daily OT": "DAILY OT",
-    "Daily Double OT": "DOUBLE OT",
-    "Weekly OT": "WEEKLY OT",
-    "Rest Day OT": "REST DAY OT",
-    "Public Holiday OT": "PUBLIC HOLIDAY OT",
     "Paid Time Off": "PTO",
 }
 # Metric name -> row label in the Team Summary totals block.
 TEAM_LABELS = {
     "Payroll Hours": "Payroll",
     "Regular Hours": "Regular",
-    "Daily OT": "Daily OT",
-    "Daily Double OT": "Double OT",
-    "Weekly OT": "Weekly OT",
-    "Rest Day OT": "Rest Day OT",
-    "Public Holiday OT": "Public Holiday OT",
 }
 
 # "Assembly - Supervisor" belongs to the Assembly department. The tag only suggests who
 # supervises it when the department is first set up: the saved supervisor list decides.
 SUPERVISOR_POSITION = re.compile(r"^(.+?)\s*[-–—]\s*supervisor\s*$", re.IGNORECASE)
+
+# Practice accounts. Jibble can still list them in an export after they're archived.
+TEST_DEPARTMENT = "test"
 
 BREAK_MODEL_MESSAGE = (
     "This file has break punches from Jibble. This app takes off a set lunch time instead, "
@@ -87,10 +81,12 @@ class DayRecord:
     last_out: Optional[datetime] = None
     punches: list[Punch] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    schedule: Optional[Schedule] = None
 
     @property
     def hours(self) -> DayHours:
-        return calculate_day(self.punches, self.row is not None)
+        day_off = self.schedule is not None and self.day.weekday() not in self.schedule.days
+        return calculate_day(self.punches, self.row is not None, self.schedule, day_off)
 
 
 @dataclass
@@ -111,8 +107,12 @@ class Employee:
         return match[1] if match else self.position
 
     @property
-    def is_supervisor(self) -> bool:
-        return bool(SUPERVISOR_POSITION.match(self.position))
+    def is_test(self) -> bool:
+        return self.department.casefold() == TEST_DEPARTMENT
+
+    @property
+    def in_reports(self) -> bool:
+        return self.has_position and not self.is_test
 
     @property
     def has_punches(self) -> bool:
@@ -120,10 +120,6 @@ class Employee:
 
     def total(self, metric: str) -> Optional[int]:
         return weekly_total(record.metrics.get(metric) for record in self.days.values())
-
-    @property
-    def overtime(self) -> Optional[int]:
-        return weekly_total(self.total(metric) for metric in OVERTIME)
 
 
 @dataclass
@@ -142,6 +138,7 @@ class WeeklyExport:
     entry_rows: int
     column_counts: dict[str, int]
     supervisors: dict[str, str] = field(default_factory=dict)  # lowercased department to supervisor name
+    settings_note: str = ""  # set when the settings came from the copy on this PC
 
     @property
     def dates(self) -> list[date]:
@@ -149,9 +146,9 @@ class WeeklyExport:
 
     @property
     def included(self) -> list[Employee]:
-        """Employees with a recorded position, by department then name."""
+        """Employees with a recorded position other than Test, by department then name."""
         return sorted(
-            (e for e in self.employees if e.has_position),
+            (e for e in self.employees if e.in_reports),
             key=lambda e: (e.department.casefold(), e.name.casefold(), e.code),
         )
 
@@ -160,21 +157,29 @@ class WeeklyExport:
         return [e for e in self.employees if not e.has_position]
 
     @property
+    def test_accounts(self) -> list[Employee]:
+        return [e for e in self.employees if e.is_test]
+
+    @property
     def review_count(self) -> int:
         return sum(not check.match for check in self.checks)
 
 
-def load_export(path: str | Path) -> WeeklyExport:
+def _no_schedule(_code: str, _department: str) -> None:
+    return None
+
+
+def load_export(path: str | Path, schedule_for: ScheduleLookup = _no_schedule) -> WeeklyExport:
     path = Path(path)
     data = path.read_bytes()
     try:
         workbook = openpyxl.load_workbook(path, data_only=True)
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
         raise UnsupportedExport(f"{path.name} could not be opened. Make sure it's an Excel file.") from error
-    return read_workbook(workbook, path.name, hashlib.sha256(data).hexdigest())
+    return read_workbook(workbook, path.name, hashlib.sha256(data).hexdigest(), schedule_for)
 
 
-def read_workbook(workbook, source_name: str, digest: str = "") -> WeeklyExport:
+def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: ScheduleLookup = _no_schedule) -> WeeklyExport:
     for sheet in (TIMESHEETS, ENTRIES, TEAM):
         if sheet not in workbook:
             raise UnsupportedExport(f"This file is missing a sheet called {sheet}. Export it from Jibble again with all the options turned on.")
@@ -189,7 +194,7 @@ def read_workbook(workbook, source_name: str, digest: str = "") -> WeeklyExport:
 
     checks: list[Check] = []
     for employee in employees.values():
-        _check_days(employee, dates)
+        _check_days(employee, dates, schedule_for)
     _check_individual_sheets(workbook, employees, dates, checks)
     _check_team_summary(team_rows, employees, checks)
     _check_calculated_gross(employees, dates, checks)
@@ -377,11 +382,12 @@ def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: lis
 # --- Cross-checks ------------------------------------------------------------
 
 
-def _check_days(employee: Employee, dates: list[date]) -> None:
+def _check_days(employee: Employee, dates: list[date], schedule_for: ScheduleLookup) -> None:
     if not employee.has_position:
         employee.notes.append("Position is missing in Jibble.")
     for day in dates:
         record = employee.days.setdefault(day, DayRecord(day=day))
+        record.schedule = schedule_for(employee.code, employee.department)
         issues = record.issues
         if record.row is None:
             issues.append("Daily source row is missing.")
@@ -390,16 +396,14 @@ def _check_days(employee: Employee, dates: list[date]) -> None:
             issues.append("Duplicate raw punch event.")
         if any(p.time.date() != day for p in punches):
             issues.append("Punch crosses date boundary; review raw entries.")
-        sessions, problems = pair_punches(punches)
-        issues.extend(problems)
-        starts = [s.start for s in sessions if s.start]
-        ends = [s.end for s in sessions if s.end]
-        if record.first_in != (starts[0] if starts else None):
+        issues.extend(pair_punches(punches)[1])
+        # Jibble's own columns follow its labels, even on a day where they're swapped.
+        ins = [p.time for p in punches if p.kind == "In"]
+        outs = [p.time for p in punches if p.kind == "Out"]
+        if record.first_in != (ins[0] if ins else None):
             issues.append("First In disagrees with raw punch events.")
-        if record.last_out != (ends[-1] if ends else None):
+        if record.last_out != (outs[-1] if outs else None):
             issues.append("Last Out disagrees with raw punch events.")
-        if record.first_in and record.last_out and record.last_out < record.first_in:
-            issues.append("Last out is earlier than first in.")
         for metric in METRICS:
             if record.metrics.get(metric) is None:
                 issues.append(f"{metric} is missing.")
@@ -502,7 +506,7 @@ def _check_team_summary(team_rows: Sequence[tuple], employees: dict[str, Employe
 
 def _check_calculated_gross(employees: dict[str, Employee], dates: list[date], checks: list[Check]) -> None:
     for employee in employees.values():
-        if not employee.has_position:
+        if not employee.in_reports:
             continue
         for day in dates:
             record = employee.days[day]

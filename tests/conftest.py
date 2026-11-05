@@ -1,6 +1,8 @@
 import pytest
 
-from punch_clock import reports
+from sample_export import write_settings
+
+from punch_clock import reports, settings
 
 
 @pytest.fixture(autouse=True)
@@ -10,6 +12,8 @@ def allow_long_temp_paths(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def private_supervisor_list(monkeypatch, tmp_path_factory):
-    """Tests must never read or change the real list on this PC."""
+def private_settings(monkeypatch, tmp_path_factory):
+    """Tests must never read this PC's real settings file, its saved copy or where it remembers the file is."""
     monkeypatch.setenv("APPDATA", str(tmp_path_factory.mktemp("appdata")))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path_factory.mktemp("home")))
+    write_settings(settings.file_path())

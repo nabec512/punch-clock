@@ -14,6 +14,7 @@ from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
 
+from punch_clock import __version__
 from punch_clock.assignments import MISSING_SUPERVISOR_TITLE, ReviewGroup, missing_supervisor_codes
 from punch_clock.hours import format_minutes, gap_minutes, weekly_total
 from punch_clock.jibble_export import Employee, UnsupportedExport, WeeklyExport
@@ -99,9 +100,10 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
     ]
     if missing_supervisor:
         block += [_para(MISSING_SUPERVISOR_TITLE.upper(), 9, WARN, bold=True), Spacer(1, 5)]
-    rows = [["Day / date", "In", "Out", "Gross", "Lunch", "Net"]]
+    rows = [["Day / date", "In", "Out", "Gross", "Lunch", "Net", "Paid"]]
     warnings: list[str] = []
     info: list[str] = []
+    pay_notes: dict[str, list[str]] = {}
     gross_days: list[Optional[int]] = []
     net_days: list[Optional[int]] = []
     for day in export.dates:
@@ -115,7 +117,7 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
                 # No punches is not a recorded zero, so it never prints as 0:00.
                 dash = "-" if hours.gross is not None else format_minutes(None)
                 first = "No punches" if hours.gross is not None else "NR"
-                rows.append([label, first, "", dash, dash, dash])
+                rows.append([label, first, "", dash, dash, dash, dash])
             for index, session in enumerate(hours.sessions):
                 rows.append(
                     [
@@ -125,10 +127,15 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
                         format_minutes(hours.gross) if index == 0 else "",
                         format_minutes(hours.lunch) if index == 0 else "",
                         format_minutes(hours.net) if index == 0 else "",
+                        format_minutes(hours.paid) if index == 0 else "",
                     ]
                 )
         if hours.gaps:
             info.append(_gap_note(day, hours))
+        if hours.note:
+            info.append(f"{day:%a}: {hours.note}")
+        if hours.pay_note:
+            pay_notes.setdefault(hours.pay_note, []).append(f"{day:%a}")
         for punch in record.punches:
             if punch.note:
                 info.append(f'{day:%a} {punch.kind} {_clock(punch.time)}, Jibble note: "{punch.note}"')
@@ -137,18 +144,22 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
         if hours.lunch_capped:
             warnings.append(f"{day:%a}: lunch capped at gross hours.")
         warnings.extend(f"{day:%a}: {issue}" for issue in record.issues)
+    # These can apply most days, so each gets one line for the week rather than one line a day.
+    info += [f"{', '.join(days)}: {note}" for note, days in pay_notes.items()]
     weekly = [
         "Weekly gross",
         format_minutes(weekly_total(gross_days)),
-        "Weekly net",
+        "Net",
         format_minutes(weekly_total(net_days)),
-        "Jibble OT",
-        format_minutes(employee.overtime),
+        "Paid",
+        format_minutes(weekly_total(employee.days[day].hours.paid for day in export.dates)),
+        "Overtime",
+        format_minutes(weekly_total(employee.days[day].hours.overtime for day in export.dates)),
     ]
     block += [
-        _table(rows, [110, 100, 100, 77, 76, 77], padding=4),
+        _table(rows, [100, 85, 85, 70, 60, 70, 70], padding=4),
         Spacer(1, 6),
-        _table([weekly], [110, 70, 100, 70, 110, 80], header=False),
+        _table([weekly], [100, 65, 55, 65, 55, 65, 70, 65], header=False),
     ]
     for note in dict.fromkeys(info):
         block += [Spacer(1, 4), _para(note, 9, MUTED)]
@@ -241,7 +252,10 @@ def _page_frame(pdf, export: WeeklyExport, group: Optional[ReviewGroup], title: 
     pdf.line(LEFT, 722, RIGHT, 722)
     pdf.setFont(regular, 8)
     pdf.setFillColor(MUTED)
-    pdf.drawString(LEFT, 34, f"{export.exported}  |  {export.timezone}  |  {page} / {pages}")
+    pdf.drawString(LEFT, 34, f"{export.exported}  |  {export.timezone}  |  Punch Clock {__version__}  |  {page} / {pages}")
+    if export.settings_note:
+        pdf.setFillColor(WARN)
+        pdf.drawString(LEFT, 24, export.settings_note)
 
 
 def _write_note(pdf, text, y, size=9, color=MUTED) -> float:
@@ -297,7 +311,8 @@ def _headcount_page(pdf, export: WeeklyExport, group: Optional[ReviewGroup], chu
     )
     _write_note(
         pdf,
-        "Jibble overtime is retained as exported. It is not recalculated from net hours. "
+        "Paid follows each schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time. "
+        "Overtime starts 15 minutes past the scheduled hours, counted from the end of those hours. "
         "NR = no recorded timestamp; it does not establish absence. "
         "Full source comparisons are in the validation file.",
         y,

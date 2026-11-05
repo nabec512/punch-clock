@@ -9,9 +9,10 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from punch_clock import __version__, supervisor_list, updater
-from punch_clock.assignments import department_names
-from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, load_export
+from punch_clock import __version__, settings, updater
+from punch_clock.assignments import departments_without_supervisor
+from punch_clock.hours import DOUBLE_PUNCH_NOTE
+from punch_clock.jibble_export import UnsupportedExport, WeeklyExport
 from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
@@ -22,23 +23,64 @@ def _employees(count: int) -> str:
     return f"{count} employee" if count == 1 else f"{count} employees"
 
 
+def _missing_punches(export: WeeklyExport) -> list[str]:
+    """Who has a day needing typed hours, and which days."""
+    lines = []
+    for employee in export.included:
+        days = [f"{day:%a}" for day in export.dates if employee.days[day].punches and employee.days[day].hours.gross is None]
+        if days:
+            lines.append(f"  {employee.name}: {', '.join(days)}")
+    return lines
+
+
+def _maybe_swapped(export: WeeklyExport) -> list[str]:
+    """Who Jibble may have the wrong way round as the export ends: still "in", or a last day that began with Out."""
+    names = []
+    for employee in export.included:
+        worked = [employee.days[day] for day in export.dates if employee.days[day].punches]
+        if not worked:
+            continue
+        last = worked[-1]
+        fixed = last.hours.note == DOUBLE_PUNCH_NOTE
+        if last.punches[-1].kind == "In" or (last.punches[0].kind == "Out" and not fixed):
+            names.append(employee.name)
+    return names
+
+
 def process_summary(result: ProcessResult) -> str:
     export = result.export
     lines = [
         f"Done. The reports for {_employees(len(export.included))} are in this folder:",
         result.folder.name,
     ]
+    if export.settings_note:
+        lines += ["", export.settings_note]
     if result.groups:
         lines += ["", "Next, open the Supervisor files folder. Send each supervisor their PDF to print and their Excel file to fill in and send back:"]
     lines += [f"  {group.title}: {_employees(len(group.employees))}" for group in result.groups]
     if any(group.supervisor is None for group in result.groups):
-        lines += ["", "The Missing supervisor group has no one on the Supervisors list, so accounting reviews those two files. To change this, add them to the list, then make the reports again."]
+        departments = ", ".join(departments_without_supervisor(export))
+        lines += ["", f"The settings file has no supervisor for: {departments}. Accounting reviews those two Missing supervisor files."]
     if export.excluded:
         lines += ["", f"Not included because they have no position in Jibble: {', '.join(e.name for e in export.excluded)}"]
+    if export.test_accounts:
+        lines += ["", f"Not included because their position in Jibble is Test: {', '.join(e.name for e in export.test_accounts)}"]
+    missing = _missing_punches(export)
+    if missing:
+        lines += ["", "Missing a punch, so the hours need to be entered for these days:", *missing]
+    swapped = _maybe_swapped(export)
+    if swapped:
+        lines += [
+            "",
+            f"Punches may be swapped for: {', '.join(swapped)}. If so, they should clock out and straight back in "
+            "the next time they arrive. Someone who's simply at work right now can ignore this.",
+        ]
+    forgotten = missing or any(employee.days[day].hours.note for employee in export.included for day in export.dates)
+    reason = " A forgotten punch can cause this, because Jibble counts the time until the next punch as worked." if forgotten else ""
     if export.review_count == 1:
-        lines += ["", "1 total doesn't match Jibble. Please check the Validation file."]
+        lines += ["", f"1 total doesn't match Jibble. Please check the Validation file.{reason}"]
     elif export.review_count:
-        lines += ["", f"{export.review_count} totals don't match Jibble. Please check the Validation file."]
+        lines += ["", f"{export.review_count} totals don't match Jibble. Please check the Validation file.{reason}"]
     return "\n".join(lines)
 
 
@@ -73,94 +115,23 @@ def choose_and_process(parent) -> Optional[ProcessResult]:
         title="Choose this week's file from Jibble",
         filetypes=[("Excel file", "*.xlsx")],
     )
-    return _show_errors(parent, lambda: _process(parent, source)) if source else None
+    return _show_errors(parent, lambda: process_export(source)) if source else None
 
 
-def _process(parent, source: str) -> Optional[ProcessResult]:
-    """Ask about any department the list has never seen before making the reports."""
-    export = load_export(source)
-    known = {department.casefold() for department in supervisor_list.load()}
-    if any(name.casefold() not in known for name in department_names(export)) and not edit_supervisors(parent, export):
+def choose_settings_file(parent) -> Optional[Path]:
+    """Ask where this PC's settings file is. Returns it if it's good, and otherwise nothing changes."""
+    from tkinter import filedialog
+
+    chosen = filedialog.askopenfilename(
+        parent=parent,
+        title="Choose the Punch Clock settings file",
+        initialdir=str(settings.file_path().parent),
+        filetypes=[("Settings file", "*.json")],
+    )
+    if not chosen:
         return None
-    return process_export(source)
-
-
-def edit_supervisors(parent, export: Optional[WeeklyExport] = None) -> bool:
-    """Let the user choose who reviews each department. Returns True if they saved."""
-    import tkinter as tk
-    from tkinter import messagebox, ttk
-
-    saved = supervisor_list.load()
-    current = {department.casefold(): name for department, name in saved.items()}
-    departments = {department.casefold(): department for department in saved}
-    suggested: dict[str, str] = {}
-    people = {name for name in saved.values() if name}
-    if export:
-        for name in department_names(export):
-            departments.setdefault(name.casefold(), name)
-        # A "- Supervisor" position only fills in the first guess.
-        suggested = {e.department.casefold(): e.name for e in export.included if e.is_supervisor}
-        people |= {e.name for e in export.employees}
-    if not departments:
-        messagebox.showinfo("Supervisors", "Departments appear here after you choose a Jibble file.", parent=parent)
-        return False
-
-    window = tk.Toplevel(parent)
-    window.title("Supervisors")
-    window.transient(parent)
-    window.geometry(f"+{parent.winfo_rootx() + 30}+{parent.winfo_rooty() + 30}")
-    frame = ttk.Frame(window, padding=16)
-    frame.pack(fill="both", expand=True)
-    ttk.Label(
-        frame,
-        text="Choose who reviews each department. You can type a name that isn't in Jibble.\n"
-        "Leave it blank if there's no supervisor, and accounting will review those employees.\n"
-        "Changes apply the next time you make a week's reports.",
-        justify="left",
-    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-
-    canvas = tk.Canvas(frame, highlightthickness=0)
-    rows = ttk.Frame(canvas)
-    canvas.create_window((0, 0), window=rows, anchor="nw")
-    canvas.grid(row=1, column=0, sticky="nsew")
-
-    def on_wheel(event) -> str:
-        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-        return "break"  # a combobox would otherwise change its name as the list scrolls past
-
-    choices: dict[str, tk.StringVar] = {}
-    ordered = sorted(departments, key=lambda key: departments[key].casefold())
-    for number, key in enumerate(ordered):
-        ttk.Label(rows, text=departments[key]).grid(row=number, column=0, sticky="w", padx=(0, 16), pady=3)
-        choices[key] = tk.StringVar(value=current[key] if key in current else suggested.get(key, ""))
-        box = ttk.Combobox(rows, textvariable=choices[key], values=sorted(people, key=str.casefold), width=32)
-        box.grid(row=number, column=1, sticky="ew", pady=3)
-        box.bind("<MouseWheel>", on_wheel)
-    rows.update_idletasks()
-    canvas.configure(width=rows.winfo_reqwidth(), height=min(rows.winfo_reqheight(), 360), scrollregion=(0, 0, rows.winfo_reqwidth(), rows.winfo_reqheight()))
-    if rows.winfo_reqheight() > 360:
-        bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=bar.set)
-        bar.grid(row=1, column=1, sticky="ns")
-        window.bind("<MouseWheel>", on_wheel)
-
-    was_saved = False
-
-    def on_save() -> None:
-        nonlocal was_saved
-        supervisor_list.save({departments[key]: choices[key].get().strip() for key in ordered})
-        was_saved = True
-        window.destroy()
-
-    buttons = ttk.Frame(frame)
-    buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(16, 0))
-    ttk.Button(buttons, text="Save", command=lambda: _show_errors(window, on_save)).pack(side="left", padx=(0, 8))
-    ttk.Button(buttons, text="Cancel", command=window.destroy).pack(side="left")
-    window.bind("<Escape>", lambda _event: window.destroy())
-    window.grab_set()
-    window.focus_set()
-    parent.wait_window(window)
-    return was_saved
+    path = Path(chosen)
+    return path if _show_errors(parent, lambda: settings.use_file(path)) else None
 
 
 def _in_background(root, work: Callable, finished: Callable) -> None:
@@ -244,8 +215,8 @@ def run_window() -> int:
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(2, weight=1)
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
+    settings_location = tk.StringVar(value=f"Settings file: {settings.file_path()}")
     last_folder: dict[str, Path] = {}
-    last_export: dict[str, WeeklyExport] = {}
     busy = False
 
     def while_busy(action: Callable) -> Callable:
@@ -262,29 +233,30 @@ def run_window() -> int:
     def on_process() -> None:
         result = choose_and_process(root)
         if result:
-            last_export["export"] = result.export
             status.set(process_summary(result))
             last_folder["path"] = result.folder
             open_button.state(["!disabled"])
             os.startfile(result.folder)
 
+    def on_settings_file() -> None:
+        chosen = choose_settings_file(root)
+        if chosen:
+            settings_location.set(f"Settings file: {chosen}")
+
     ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=while_busy(on_process))
     process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
     ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=2, column=0, sticky="nsew")
+    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=3, column=0, sticky="w", pady=(12, 0))
     bottom = ttk.Frame(frame)
-    bottom.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-    supervisors_button = ttk.Button(
-        bottom,
-        text="Supervisors...",
-        command=while_busy(lambda: _show_errors(root, lambda: edit_supervisors(root, last_export.get("export")))),
-    )
-    supervisors_button.pack(side="left")
+    bottom.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+    settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
+    settings_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
     open_button.state(["disabled"])
     open_button.pack(side="right")
     if updater.is_packaged():
-        _offer_update(root, status, [process_button, supervisors_button], lambda: busy)
+        _offer_update(root, status, [process_button, settings_button], lambda: busy)
     root.mainloop()
     return 0
 
@@ -306,6 +278,7 @@ def run_command_line(source: Path, output_dir: Optional[Path]) -> int:
         "employees": len(result.export.included),
         "review_files": [group.title for group in result.groups],
         "needs_review": [check.label for check in result.export.checks if not check.match],
+        "settings_note": result.export.settings_note,
     }
     _emit(sys.stdout, json.dumps(report, indent=2))
     return 0

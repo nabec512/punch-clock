@@ -4,9 +4,12 @@ Tests and the packaging smoke test use this so no real export ever enters the
 repository. Run it directly to write a sample file:
 
     python tests/sample_export.py sample.xlsx
+
+Add a second path to also write matching fictional settings.
 """
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -26,6 +29,13 @@ class Person:
     position: str = ""
     # (day offset from Monday, kind, "HH:MM:SS", note)
     punches: list[tuple] = field(default_factory=list)
+
+
+def write_settings(path, supervisors=None, departments=None, members=None) -> None:
+    """A settings file like the real one."""
+    settings = {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump(settings, file, ensure_ascii=False)
 
 
 def default_people() -> list[Person]:
@@ -83,8 +93,11 @@ def _daily_minutes(person: Person, offset: int, week_start: date) -> tuple[int, 
         elif opened is not None:
             seconds += int((moment - opened).total_seconds())
             opened = None
-    first = _clock(day, punches[0][2]) if punches else None
-    last = _clock(day, punches[-1][2]) if punches else None
+    # As in real exports, these follow the labels, even on a day where they're swapped.
+    ins = [p[2] for p in punches if p[1] == "In"]
+    outs = [p[2] for p in punches if p[1] == "Out"]
+    first = _clock(day, ins[0]) if ins else None
+    last = _clock(day, outs[-1]) if outs else None
     return (seconds + 30) // 60, first, last
 
 
@@ -255,4 +268,6 @@ def _entries_sheet(workbook, people, dates) -> None:
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "sample-export.xlsx"
     build_workbook().save(target)
+    if len(sys.argv) > 2:
+        write_settings(sys.argv[2], {"Assembly": "Avery Lee"}, {"Assembly": {"start": "08:00", "end": "16:30"}})
     print(target)

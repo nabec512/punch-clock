@@ -64,8 +64,16 @@ Write-Host 'Trying the packaged app on a sample export'
 $smoke = Join-Path 'build' 'smoke'
 New-Item -ItemType Directory -Path $smoke -Force | Out-Null
 $sample = Join-Path $smoke 'sample.xlsx'
-Invoke-Checked $python @('tests\sample_export.py', $sample)
+$settings = Join-Path $smoke 'punch-clock-settings.json'
+Invoke-Checked $python @('tests\sample_export.py', $sample, $settings)
+# Fictional settings in the default place, and away from this PC's own settings and saved copy.
+$realAppData = $env:APPDATA
+$realHome = $env:USERPROFILE
+$env:USERPROFILE = (Resolve-Path $smoke).Path
+$env:APPDATA = (Resolve-Path $smoke).Path
 $app = Start-Process -FilePath 'dist\PunchClock\PunchClock.exe' -ArgumentList "`"$sample`"", '--output-dir', "`"$smoke`"" -Wait -PassThru
+$env:APPDATA = $realAppData
+$env:USERPROFILE = $realHome
 if ($app.ExitCode -ne 0) { throw "The packaged app exited with code $($app.ExitCode)." }
 $week = Get-ChildItem $smoke -Directory | Select-Object -First 1
 if (-not $week) { throw 'The packaged app did not create the output folder.' }
