@@ -34,6 +34,14 @@ def build_validation_text(export: WeeklyExport) -> str:
         f"Employees: {len(export.employees)}",
         f"{TIMESHEETS}: {export.timesheet_rows} data rows; {export.column_counts[TIMESHEETS]} columns",
         f"{ENTRIES}: {export.entry_rows} event rows; {export.column_counts[ENTRIES]} columns",
+    ]
+    if export.skipped_entry_rows:
+        lines.append(
+            f"Left out: {export.skipped_entry_rows} {ENTRIES} rows from people not in the other sheets, "
+            f"in departments this file doesn't cover ({', '.join(export.skipped_positions)}). "
+            "Jibble keeps them when an export is filtered by position."
+        )
+    lines += [
         "",
         "MAPPING",
         "Employee identity = Member Code, cross-checked to name and Team Summary roster.",

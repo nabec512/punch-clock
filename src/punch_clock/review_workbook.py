@@ -30,7 +30,7 @@ WEEK_TOTAL = "Week total"
 INCOMPLETE = "Incomplete"
 
 COLUMNS = [
-    (EMPLOYEE, 24), (DATE, 12), (CLOCK_IN, 10), (CLOCK_OUT, 10), (GROSS, 11), (LUNCH, 11), (NET, 11),
+    (EMPLOYEE, 34), (DATE, 12), (CLOCK_IN, 10), (CLOCK_OUT, 10), (GROSS, 11), (LUNCH, 11), (NET, 11),
     (ADJUSTMENT, 12), (APPROVED, 11), (OVERTIME, 11), (COMMENT, 30), (REVIEWED, 10), (NOTES, 44),
 ]
 COLUMN = {label: index for index, (label, _) in enumerate(COLUMNS)}
@@ -91,6 +91,11 @@ def _formats(workbook) -> dict:
 
 def _as_days(minutes: Optional[int]) -> Optional[float]:
     return None if minutes is None else minutes / 1440
+
+
+def employee_label(employee: Employee) -> str:
+    """The name and department, on every row so filtering by employee keeps their rows together."""
+    return f"{employee.name} - {employee.department}" if employee.department else employee.name
 
 
 def _clock(value) -> str:
@@ -179,7 +184,7 @@ def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) 
     # Each pair gets its own line, so a clock-in sits level with its clock-out.
     no_times = "-" if hours.gross is not None else "Missing"
 
-    sheet.write(row, COLUMN[EMPLOYEE], employee.name, formats["text"])
+    sheet.write(row, COLUMN[EMPLOYEE], employee_label(employee), formats["text"])
     sheet.write_datetime(row, COLUMN[DATE], datetime.combine(record.day, time()), formats["date"])
     sheet.write(row, COLUMN[CLOCK_IN], "\n".join(_clock(s.start) for s in hours.sessions) or no_times, formats["wrap"])
     sheet.write(row, COLUMN[CLOCK_OUT], "\n".join(_clock(s.end) for s in hours.sessions) or no_times, formats["wrap"])
@@ -252,7 +257,7 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
     def column_range(label: str) -> str:
         return f"{xl_rowcol_to_cell(first, COLUMN[label])}:{xl_rowcol_to_cell(last, COLUMN[label])}"
 
-    sheet.write(row, COLUMN[EMPLOYEE], employee.name, formats["total"])
+    sheet.write(row, COLUMN[EMPLOYEE], employee_label(employee), formats["total"])
     sheet.write(row, COLUMN[DATE], WEEK_TOTAL, formats["total"])
     sheet.write_blank(row, COLUMN[CLOCK_IN], None, formats["total"])
     sheet.write_blank(row, COLUMN[CLOCK_OUT], None, formats["total"])

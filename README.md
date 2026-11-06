@@ -51,6 +51,8 @@ Export one full Monday to Sunday week from Timesheets as XLSX, with durations in
 
 The `Team Summary` sheet is also used, for the week, company name and team totals.
 
+To make reports for just some departments, filter the export by position in Jibble. Jibble still lists everyone's punches in `Raw Time Entries`, so the app skips punches from departments the rest of the file leaves out, and the validation file says how many it skipped.
+
 ## Weekly use
 
 **Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. The week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
@@ -163,6 +165,7 @@ The app stops with a plain message rather than risk a wrong report. It refuses a
 - Missing sheets or renamed columns
 - Duplicate daily rows
 - Conflicting names or positions for one member code
+- Punches from someone missing from the other sheets when their department is in the file
 - Unknown entry types
 - Mixed timezones
 - Anything other than one Monday to Sunday week

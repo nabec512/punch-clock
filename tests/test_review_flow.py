@@ -67,7 +67,8 @@ class Sheet:
 
     def row_for(self, name, when):
         for number in range(self.first, self.sheet.max_row + 1):
-            if self.sheet.cell(number, self.columns[EMPLOYEE]).value != name:
+            label = self.sheet.cell(number, self.columns[EMPLOYEE]).value or ""
+            if label != name and not label.startswith(f"{name} - "):
                 continue
             value = self.sheet.cell(number, self.columns[DATE]).value
             if value == when or (isinstance(value, datetime) and value.date() == when):
@@ -309,11 +310,19 @@ def test_daily_totals_are_not_repeated_for_multiple_punch_pairs(tmp_path):
     source = tmp_path / "export.xlsx"
     build_workbook(people).save(source)
     sheet = Sheet(review_file(process_export(source), "Bea"))
-    rows = [r for r in range(sheet.first, sheet.sheet.max_row + 1) if sheet.sheet.cell(r, sheet.columns[EMPLOYEE]).value == "Ann"]
+    rows = [r for r in range(sheet.first, sheet.sheet.max_row + 1) if sheet.sheet.cell(r, sheet.columns[EMPLOYEE]).value == "Ann - Paint"]
     assert len(rows) == 6  # five weekdays plus the week total, not one row per punch pair
     assert sheet.sheet.cell(rows[0], sheet.columns["Clock in"]).value == "8:00 AM\n1:00 PM"
     assert sheet.sheet.cell(rows[0], sheet.columns["Clock out"]).value == "12:00 PM\n4:00 PM"
     assert sheet.sheet.cell(rows[1], sheet.columns["Clock in"]).value == "-"  # no punches that day
+
+
+def test_every_row_names_the_employee_and_their_department(processed):
+    sheet = Sheet(review_file(processed, "Bea Boss"))
+    labels = {sheet.sheet.cell(r, sheet.columns[EMPLOYEE]).value for r in range(sheet.first, sheet.sheet.max_row + 1)}
+    assert {"Ann Painter - Paint", "Bea Boss - Paint"} <= labels  # the supervisor tag isn't part of the department
+    total = sheet.row_for("Ann Painter", WEEK_TOTAL)
+    assert sheet.sheet.cell(total, sheet.columns[EMPLOYEE]).value == "Ann Painter - Paint"
 
 
 def test_columns_are_the_ones_supervisors_need(processed):

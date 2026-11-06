@@ -137,6 +137,9 @@ class WeeklyExport:
     timesheet_rows: int
     entry_rows: int
     column_counts: dict[str, int]
+    # Punches by people the export leaves out, as a position filter in Jibble does.
+    skipped_entry_rows: int = 0
+    skipped_positions: list[str] = field(default_factory=list)
     supervisors: dict[str, str] = field(default_factory=dict)  # lowercased department to supervisor name
     settings_note: str = ""  # set when the settings came from the copy on this PC
 
@@ -190,7 +193,7 @@ def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: Sc
     period, start = _read_week(team_rows)
     dates = [start + timedelta(days=i) for i in range(7)]
     employees = _read_employees(timesheet_rows, timesheet_headers, dates)
-    timezone = _attach_punches(employees, entry_rows, dates)
+    timezone, skipped = _attach_punches(employees, entry_rows, dates)
 
     checks: list[Check] = []
     for employee in employees.values():
@@ -212,6 +215,8 @@ def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: Sc
         sha256=digest,
         timesheet_rows=len(timesheet_rows),
         entry_rows=len(entry_rows),
+        skipped_entry_rows=len(skipped),
+        skipped_positions=sorted({_text(c["Position"]) or "(blank)" for c in skipped}, key=str.casefold),
         column_counts={
             TIMESHEETS: len([h for h in timesheet_headers if h]),
             ENTRIES: len([h for h in entry_headers if h]),
@@ -348,12 +353,45 @@ def _read_employees(rows: list[dict], headers: Sequence[str], dates: list[date])
     return employees
 
 
-def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: list[date]) -> str:
-    """Attach In/Out punches to each employee's days. Returns the single timezone."""
+def _department_of(position) -> str:
+    text = _text(position)
+    match = SUPERVISOR_POSITION.match(text)
+    return (match[1] if match else text).casefold()
+
+
+def _outside_export(employees: dict[str, Employee], cells: dict, where: str) -> bool:
+    """True for a punch by someone the export leaves out, so it can be skipped.
+
+    Jibble's position filter leaves people out of every sheet except Raw Time Entries.
+    Skipping is only safe when that person's whole department is left out: someone missing
+    from a department the file does cover means the sheets really disagree.
+    """
+    code = _text(cells["Member Code"])
+    if not code or code in employees:
+        return False
+    if "Position" in cells:
+        covered = {e.department.casefold() for e in employees.values()}
+        if _department_of(cells["Position"]) not in covered:
+            return True
+    raise UnsupportedExport(
+        f"{where}: this person has punches but isn't in the {TIMESHEETS} sheet, "
+        "even though their department is. Export the file from Jibble again."
+    )
+
+
+def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: list[date]) -> tuple[str, list[dict]]:
+    """Attach In/Out punches to each employee's days.
+
+    Returns the single timezone, and the rows skipped because the export leaves those people out.
+    """
     punches: dict[tuple[str, date], list[Punch]] = defaultdict(list)
     zones = set()
+    skipped = []
     for cells in rows:
         where = f"{ENTRIES} row {cells['_row']}"
+        if _outside_export(employees, cells, where):
+            skipped.append(cells)
+            continue
         code, when, time = _text(cells["Member Code"]), cells["Date"], cells["Time"]
         kind = _text(cells["Entry Type"])
         if "break" in kind.casefold():
@@ -376,7 +414,7 @@ def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: lis
     for (code, day), day_punches in punches.items():
         record = employees[code].days.setdefault(day, DayRecord(day=day))
         record.punches = sorted(day_punches, key=lambda p: (p.time, p.row))
-    return next(iter(zones), "No punches")
+    return next(iter(zones), "No punches"), skipped
 
 
 # --- Cross-checks ------------------------------------------------------------

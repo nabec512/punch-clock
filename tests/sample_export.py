@@ -101,7 +101,10 @@ def _daily_minutes(person: Person, offset: int, week_start: date) -> tuple[int, 
     return (seconds + 30) // 60, first, last
 
 
-def build_workbook(people: list[Person] | None = None, week_start: date = WEEK_START) -> openpyxl.Workbook:
+def build_workbook(
+    people: list[Person] | None = None, week_start: date = WEEK_START, filtered_out: list[Person] | None = None
+) -> openpyxl.Workbook:
+    """filtered_out people appear only in Raw Time Entries, as when Jibble's position filter leaves them out."""
     people = default_people() if people is None else people
     workbook = openpyxl.Workbook()
     team = workbook.active
@@ -114,7 +117,7 @@ def build_workbook(people: list[Person] | None = None, week_start: date = WEEK_S
     for person in people:
         _individual_sheet(workbook, person, dates, period, payroll[person.code])
     _timesheet_sheet(workbook, people, dates, payroll)
-    _entries_sheet(workbook, people, dates)
+    _entries_sheet(workbook, [*people, *(filtered_out or [])], dates)
     return workbook
 
 

@@ -156,6 +156,19 @@ def test_validation_file_records_source_and_results(tmp_path):
     assert "LZ-1 2026-03-04: gross 7:40, lunch 0:30, net 7:10" in text
 
 
+def test_position_filtered_export_makes_reports_and_records_what_was_left_out(tmp_path):
+    source = tmp_path / "export.xlsx"
+    other = Person("Jordan Park", "JP-1", "Painting", [(0, "In", "07:00:00", ""), (0, "Out", "15:30:00", "")])
+    assembly = [p for p in default_people() if p.position.startswith("Assembly")]
+    build_workbook(assembly, filtered_out=[other]).save(source)
+    report = process_export(source, supervisors={"Assembly": "Avery Lee"})
+    assert [group.title for group in review_groups(report.export)] == ["Avery Lee"]
+    assert "Jordan Park" not in report_text(report)
+    text = report.validation.read_text(encoding="utf-8")
+    assert "Left out: 2 Raw Time Entries rows from people not in the other sheets, in departments this file doesn't cover (Painting)." in text
+    assert "REVIEW:" not in text
+
+
 def test_source_file_is_not_modified(tmp_path):
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)

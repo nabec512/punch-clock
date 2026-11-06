@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+Lets each supervisor export just their own departments, and shows departments in the review spreadsheet.
+- An export filtered by position in Jibble can now be used, so each supervisor can export just their own departments. Jibble still lists everyone's punches in it, so the app skips punches from departments the rest of the file leaves out, and the validation file says how many.
+- Each row of the review spreadsheet now shows the employee's department after their name, for example `Sam Ortiz - Assembly`.
+
 ## 0.4.0
 
 Handles forgotten punches, pays by work schedules, and moves supervisors and schedules out of the app.

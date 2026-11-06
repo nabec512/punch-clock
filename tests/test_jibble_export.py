@@ -227,6 +227,43 @@ def test_unsafe_exports_are_rejected_with_a_clear_message(change, message):
         read(workbook)
 
 
+def _other_departments():
+    return [
+        Person("Jordan Park", "JP-1", "Painting - Supervisor", [(0, "In", "07:00:00", ""), (0, "Out", "15:30:00", "")]),
+        Person("Practice Account", "PA-1", "Test", [(1, "In", "10:00:00", ""), (1, "Break", "11:00:00", "")]),
+    ]
+
+
+def test_position_filtered_export_skips_punches_from_other_departments():
+    # Jibble's position filter leaves people out of every sheet except Raw Time Entries.
+    export = read(build_workbook(filtered_out=_other_departments()))
+    assert [e.code for e in export.employees] == [e.code for e in read().employees]
+    assert export.review_count == 0, [c for c in export.checks if not c.match]
+    assert export.skipped_entry_rows == 4
+    assert export.skipped_positions == ["Painting - Supervisor", "Test"]
+    assert read().skipped_entry_rows == 0
+
+
+def test_punches_from_someone_missing_in_a_covered_department_are_refused():
+    missing = Person("Casey Moss", "CM-1", "Assembly", [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")])
+    with pytest.raises(UnsupportedExport, match="isn't in the Raw Timesheets sheet, even though their department is"):
+        read(build_workbook(filtered_out=[missing]))
+
+
+def test_a_supervisor_tag_does_not_hide_a_missing_person():
+    missing = Person("Casey Moss", "CM-1", "Receiving - Supervisor", [(0, "In", "08:00:00", "")])
+    with pytest.raises(UnsupportedExport, match="even though their department is"):
+        read(build_workbook(filtered_out=[missing]))
+
+
+def test_missing_person_is_refused_when_entries_have_no_position_column():
+    workbook = build_workbook(filtered_out=_other_departments()[:1])
+    sheet = workbook["Raw Time Entries"]
+    sheet[f"{column_letter(sheet, 'Position')}2"] = None
+    with pytest.raises(UnsupportedExport, match="even though their department is"):
+        read(workbook)
+
+
 def test_moved_rows_and_columns_are_still_found_by_label():
     workbook = build_workbook()
     workbook["Avery Lee (AL-1) Summary"].insert_rows(9, 2)
