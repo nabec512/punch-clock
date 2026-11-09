@@ -6,18 +6,20 @@ It isn't affiliated with or endorsed by Jibble.
 
 ## What you get
 
-Each export gets its own dated folder, created beside it:
+Each export gets its own folder, named for its organization and week, and created beside it:
 
 ```text
-Jibble timesheets 2026-03-02 to 2026-03-08\
+Jibble timesheets Example Co 2026-03-02 to 2026-03-08\
     Validation 2026-03-02.txt               every comparison with Jibble's own totals
     Source export 2026-03-02.xlsx           an untouched copy of the export
     Supervisor files\
-        Avery Lee - Assembly - 2026-03-02 - Printable.pdf     headcount page, then two employees per page
-        Avery Lee - Assembly - 2026-03-02.xlsx
-        Missing supervisor - 2026-03-02 - Printable.pdf
-        Missing supervisor - 2026-03-02.xlsx
+        Example Co. - Avery Lee - Assembly - 2026-03-02 - Printable.pdf     headcount page, then two employees per page
+        Example Co. - Avery Lee - Assembly - 2026-03-02.xlsx
+        Example Co. - Missing supervisor - 2026-03-02 - Printable.pdf
+        Example Co. - Missing supervisor - 2026-03-02.xlsx
 ```
+
+The organization is the company name Jibble puts at the top of the export. Each file name starts with it too, because files get sent on by themselves, and one person can supervise in more than one organization.
 
 Your export is only ever read, and everything runs on your own PC. No data is sent anywhere. Processing the same export again creates a new folder ending in `(2)`, so returned files are never overwritten.
 
@@ -70,7 +72,7 @@ To correct a punch or a position, fix it in Jibble, export again, and start from
 
 ## Who reviews whom
 
-[The settings file](#the-settings-file) says who reviews each department. A supervisor doesn't need to be in Jibble, and one person can cover several departments, with one PDF and one Excel file for all of them.
+[The settings file](#the-settings-file) says who reviews each department, separately for each organization, so two organizations can each have a `Production` department with different supervisors. A supervisor doesn't need to be in Jibble, and one person can cover several departments, with one PDF and one Excel file for all of them.
 
 | Who | Whose files they're in |
 |---|---|
@@ -110,19 +112,31 @@ The app looks for `punch-clock-settings.json` in the user's home folder. To use 
 
 To change a supervisor or a schedule, edit that file. There's no new version to release, and each PC uses the change the next time it makes reports. Files already sent out don't change.
 
+The file has a section for each organization, because organizations can have departments with the same name:
+
 ```json
 {
-  "supervisors": { "Assembly": "Avery Lee", "Receiving": "" },
-  "department_schedules": {
-    "Assembly": { "start": "08:00", "end": "16:30" },
-    "Receiving": { "start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"] }
-  },
-  "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } }
+  "organizations": {
+    "Example Co.": {
+      "supervisors": { "Assembly": "Avery Lee", "Receiving": "" },
+      "department_schedules": {
+        "Assembly": { "start": "08:00", "end": "16:30" },
+        "Receiving": { "start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"] }
+      },
+      "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } }
+    },
+    "Second Example Ltd.": {
+      "supervisors": { "Assembly": "Morgan Blake" },
+      "department_schedules": { "Assembly": { "start": "07:00", "end": "15:30" } },
+      "member_schedules": {}
+    }
+  }
 }
 ```
 
 | Key | Meaning |
 |---|---|
+| `organizations` | One section per organization, named as Jibble writes it at the top of the export. Capitals and extra spaces don't matter. Each section needs all three keys below, even if they're empty: `{}` |
 | `supervisors` | Who reviews each department. Leave a name blank, or the department out, and accounting reviews those employees |
 | `department_schedules` | Hours for each department, matched to the Jibble position without any `- Supervisor` ending |
 | `member_schedules` | Hours for anyone who differs from their department, by Jibble member code |
@@ -130,6 +144,8 @@ To change a supervisor or a schedule, edit that file. There's no new version to 
 | `days` | Days worked. Leave it out for Monday to Friday |
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.
+
+An export from an organization with no section of its own is refused, with a message giving its name exactly as the export spells it, so it never gets another organization's supervisors or hours. To process it, add a section with that name. Settings files from before version 0.6.0 have no sections. The app refuses them and says how to fix them: put the existing `supervisors`, `department_schedules` and `member_schedules` inside a section named for their organization.
 
 The app reads the file once each time someone makes reports, and doesn't touch the drive at any other time. It copies each good read to `%APPDATA%\Punch Clock\saved-settings.json`, and remembers the file's location beside it.
 
@@ -169,6 +185,7 @@ The app stops with a plain message rather than risk a wrong report. It refuses a
 - Unknown entry types
 - Mixed timezones
 - Anything other than one Monday to Sunday week
+- No organization name, or one with no section in the settings file
 - Jibble break punches, because the fixed lunch can't be mixed with Jibble's break tracking
 - An employee with too many punches to fit on one printed page
 - A folder path too long for Excel to open

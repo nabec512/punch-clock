@@ -4,7 +4,7 @@ from datetime import date, datetime
 import openpyxl
 import pytest
 from pypdf import PdfReader
-from sample_export import Person, build_workbook, write_settings
+from sample_export import COMPANY, Person, build_workbook, write_settings
 
 from punch_clock import reports, settings
 from punch_clock.assignments import (
@@ -130,8 +130,8 @@ def test_supervisor_does_not_need_to_be_in_jibble(tmp_path):
     source = tmp_path / "export.xlsx"
     build_workbook([worked("Dee", "D-1", "Packing")]).save(source)
     result = process_export(source, supervisors={"Packing": "Dana Smith"})
-    assert [p.name for p in result.pdfs] == ["Dana Smith - Packing - 2026-03-02 - Printable.pdf"]
-    assert (result.folder / REVIEW_FOLDER / "Dana Smith - Packing - 2026-03-02.xlsx").exists()
+    assert [p.name for p in result.pdfs] == ["Example Co. - Dana Smith - Packing - 2026-03-02 - Printable.pdf"]
+    assert (result.folder / REVIEW_FOLDER / "Example Co. - Dana Smith - Packing - 2026-03-02.xlsx").exists()
     text = pdf_text(result, "Dana")
     assert "Dee (D-1)" in text and "Dana Smith (" not in text  # named on the report, with no timesheet of their own
     assert "MISSING SUPERVISOR" not in text
@@ -142,7 +142,7 @@ def test_one_person_covering_two_departments_gets_one_set_of_files(tmp_path):
     build_workbook([worked("Dee", "D-1", "Packing"), worked("Gus", "G-1", "Shipping")]).save(source)
     # Spelling of the department and the person's capitals don't split them.
     result = process_export(source, supervisors={"packing": "Dana Smith", "SHIPPING": "dana smith "})
-    assert [p.name for p in result.pdfs] == ["Dana Smith - Packing, Shipping - 2026-03-02 - Printable.pdf"]
+    assert [p.name for p in result.pdfs] == ["Example Co. - Dana Smith - Packing, Shipping - 2026-03-02 - Printable.pdf"]
     assert [[e.code for e in g.employees] for g in result.groups] == [["D-1", "G-1"]]
     first = " ".join(PdfReader(result.pdfs[0]).pages[0].extract_text().split())
     assert "Packing 1 1" in first and "Shipping 1 1" in first and "Total 2 2" in first
@@ -170,8 +170,8 @@ def test_headcount_counts_supervisor_in_their_department(processed):
 
 def test_each_supervisor_gets_a_pdf_of_only_their_department(processed):
     assert [p.name for p in processed.pdfs] == [
-        "Bea Boss - Paint - 2026-03-02 - Printable.pdf",
-        "Missing supervisor - 2026-03-02 - Printable.pdf",
+        "Example Co. - Bea Boss - Paint - 2026-03-02 - Printable.pdf",
+        "Example Co. - Missing supervisor - 2026-03-02 - Printable.pdf",
     ]
     paint, missing = pdf_text(processed, "Bea Boss"), pdf_text(processed, "Missing")
     assert "Bea Boss (BB-1)" in paint and "Ann Painter (AP-1)" in paint and "Cal Painter (CP-1)" in paint
@@ -198,7 +198,7 @@ def test_a_long_list_of_departments_is_shortened_in_file_names(tmp_path):
     people = [worked(f"Worker {i}", f"W-{i}", f"Department number {i}") for i in range(6)]
     write_settings(settings.file_path(), {f"Department number {i}": "Dana Smith" for i in range(6)})
     export = _export(tmp_path, people)
-    assert review_file_name(review_groups(export)[0], export) == "Dana Smith - Department number 0 and 5 more - 2026-03-02.xlsx"
+    assert review_file_name(review_groups(export)[0], export) == "Example Co. - Dana Smith - Department number 0 and 5 more - 2026-03-02.xlsx"
 
 
 def test_file_names_are_safe_for_windows():
@@ -208,7 +208,7 @@ def test_file_names_are_safe_for_windows():
 def _export(tmp_path, people):
     path = tmp_path / "e.xlsx"
     build_workbook(people).save(path)
-    return with_supervisors(load_export(path), settings.load().supervisors)
+    return with_supervisors(load_export(path), settings.load().organization(COMPANY).supervisors)
 
 
 # --- Output folder --------------------------------------------------------------
@@ -216,15 +216,15 @@ def _export(tmp_path, people):
 
 def test_output_folder_holds_everything_for_the_week(processed):
     folder = processed.folder
-    assert folder.name == "Jibble timesheets 2026-03-02 to 2026-03-08"
+    assert folder.name == "Jibble timesheets Example Co 2026-03-02 to 2026-03-08"
     names = {p.name for p in folder.iterdir()}
     assert {"Validation 2026-03-02.txt", "Source export 2026-03-02.xlsx", REVIEW_FOLDER} == names
     files = {p.name for p in (folder / REVIEW_FOLDER).iterdir()}
     assert files == {
-        "Bea Boss - Paint - 2026-03-02 - Printable.pdf",
-        "Bea Boss - Paint - 2026-03-02.xlsx",
-        "Missing supervisor - 2026-03-02 - Printable.pdf",
-        "Missing supervisor - 2026-03-02.xlsx",
+        "Example Co. - Bea Boss - Paint - 2026-03-02 - Printable.pdf",
+        "Example Co. - Bea Boss - Paint - 2026-03-02.xlsx",
+        "Example Co. - Missing supervisor - 2026-03-02 - Printable.pdf",
+        "Example Co. - Missing supervisor - 2026-03-02.xlsx",
     }
 
 
@@ -481,4 +481,4 @@ def _as_minutes(value):
 
 def test_review_file_name_uses_group_and_week(tmp_path):
     export = _export(tmp_path, crew())
-    assert review_file_name(review_groups(export)[0], export) == "Bea Boss - Paint - 2026-03-02.xlsx"
+    assert review_file_name(review_groups(export)[0], export) == "Example Co. - Bea Boss - Paint - 2026-03-02.xlsx"

@@ -66,15 +66,20 @@ def safe_file_name(text: str) -> str:
 
 
 def _file_name_start(group: ReviewGroup, export: WeeklyExport) -> str:
-    """The supervisor, their departments and the week. The missing-supervisor group has no one to name."""
+    """The organization, supervisor, their departments and the week.
+
+    The organization comes first because files get sent on by themselves, and someone can
+    supervise in more than one. The missing-supervisor group has no one to name.
+    """
+    organization = f"{export.company} - " if export.company.strip() else ""
     if group.supervisor is None:
-        return f"{group.title} - {export.start}"
+        return f"{organization}{group.title} - {export.start}"
     names = {e.department.casefold(): e.department for e in group.employees}
     ordered = [names[key] for key in sorted(names)]
     departments = ", ".join(ordered)
     if len(ordered) > 1 and len(departments) > LONGEST_DEPARTMENTS_IN_FILE_NAME:
         departments = f"{ordered[0]} and {len(ordered) - 1} more"
-    return f"{group.title} - {departments} - {export.start}"
+    return f"{organization}{group.title} - {departments} - {export.start}"
 
 
 def review_file_name(group: ReviewGroup, export: WeeklyExport) -> str:

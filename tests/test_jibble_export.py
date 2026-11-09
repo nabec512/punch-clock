@@ -26,7 +26,7 @@ def first_row_for(sheet, code):
 
 def test_clean_export_reconciles_everywhere():
     export = read()
-    assert export.company == "Example Manufacturing Inc."
+    assert export.company == "Example Co."
     assert export.start == date(2026, 3, 2)
     assert export.timezone == "America/Vancouver"
     assert export.exported.startswith("Exported on ")
@@ -271,7 +271,7 @@ def test_moved_rows_and_columns_are_still_found_by_label():
     workbook["Raw Timesheets"].insert_cols(1)
     export = read(workbook)
     assert export.review_count == 0
-    assert export.company == "Example Manufacturing Inc."
+    assert export.company == "Example Co."
 
 
 def test_long_names_with_truncated_sheet_titles_still_match():

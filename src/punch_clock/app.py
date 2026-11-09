@@ -60,7 +60,11 @@ def process_summary(result: ProcessResult) -> str:
     lines += [f"  {group.title}: {_employees(len(group.employees))}" for group in result.groups]
     if any(group.supervisor is None for group in result.groups):
         departments = ", ".join(departments_without_supervisor(export))
-        lines += ["", f"The settings file has no supervisor for: {departments}. Accounting reviews those two Missing supervisor files."]
+        lines += [
+            "",
+            f"The {export.company} section of the settings file has no supervisor for: {departments}. "
+            "Accounting reviews those two Missing supervisor files.",
+        ]
     if export.excluded:
         lines += ["", f"Not included because they have no position in Jibble: {', '.join(e.name for e in export.excluded)}"]
     if export.test_accounts:

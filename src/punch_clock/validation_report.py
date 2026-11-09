@@ -84,8 +84,10 @@ def build_validation_text(export: WeeklyExport) -> str:
     for group in review_groups(export):
         lines.append(f"{group.title}: {len(group.employees)} employees")
     lines.append(f"Departments with no supervisor: {', '.join(departments_without_supervisor(export)) or 'None'}")
-    lines.append("Supervisors come from the settings file, not from Jibble positions.")
-    lines += ["", f"SCHEDULES (from the settings file, Punch Clock {__version__})"]
+    lines.append(
+        f"Supervisors come from the {export.company} section of the settings file, not from Jibble positions."
+    )
+    lines += ["", f"SCHEDULES (from the {export.company} section of the settings file, Punch Clock {__version__})"]
     if export.settings_note:
         lines.append(export.settings_note)
     for label in sorted({_schedule_line(e) for e in included}):

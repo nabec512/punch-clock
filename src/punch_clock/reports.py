@@ -9,8 +9,15 @@ from typing import Mapping, Optional
 from pypdf import PdfReader
 
 from punch_clock import settings
-from punch_clock.assignments import ReviewGroup, printable_file_name, review_file_name, review_groups, with_supervisors
-from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, load_export
+from punch_clock.assignments import (
+    ReviewGroup,
+    printable_file_name,
+    review_file_name,
+    review_groups,
+    safe_file_name,
+    with_supervisors,
+)
+from punch_clock.jibble_export import UnsupportedExport, WeeklyExport, assign_schedules, load_export
 from punch_clock.pdf_report import page_count, render
 from punch_clock.review_workbook import write_review_workbook
 from punch_clock.validation_report import build_validation_text
@@ -30,7 +37,9 @@ class ProcessResult:
 
 
 def output_folder_name(export: WeeklyExport) -> str:
-    return f"Jibble timesheets {export.start} to {export.end}"
+    """Named for the organization too, as each one's export for a week can be in the same place."""
+    company = safe_file_name(export.company)
+    return f"Jibble timesheets {company + ' ' if company else ''}{export.start} to {export.end}"
 
 
 def _new_folder(parent: Path, name: str) -> Path:
@@ -74,11 +83,15 @@ def process_export(
 ) -> ProcessResult:
     """Create the week's output folder beside the export, or inside ``parent``.
 
-    Reviewers come from ``supervisors``, or from the settings file if none are given.
+    Supervisors and schedules come from the export's organization in the settings file.
+    ``supervisors`` replaces that organization's supervisors.
     """
     source = Path(source)
     current = settings.load()
-    export = with_supervisors(load_export(source, current.schedule_for), current.supervisors if supervisors is None else supervisors)
+    export = load_export(source)
+    organization = current.organization(export.company)
+    assign_schedules(export, organization.schedule_for)
+    export = with_supervisors(export, organization.supervisors if supervisors is None else supervisors)
     export = replace(export, settings_note=current.note)
     groups = tuple(review_groups(export))
     folder = _new_folder(Path(parent) if parent else source.parent, output_folder_name(export))

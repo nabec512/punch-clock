@@ -1,5 +1,9 @@
 """Who supervises each department and the work schedules, from one file outside the app.
 
+The file has a section for each organization, named as Jibble names it at the top of the
+export, because two organizations can each have a department with the same name. An export
+from an organization the file doesn't list is refused rather than given another one's settings.
+
 These stay out of the app because the repository and its installers are public. Each PC
 remembers where its file is, usually a shared drive, and otherwise looks in the home folder.
 The file is read once each time reports are made, and never in the background, to leave the
@@ -24,14 +28,47 @@ WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 @dataclass(frozen=True)
-class Settings:
+class Organization:
+    name: str  # as written in the settings file
     supervisors: dict[str, str]  # a blank name means the department has none
     department_schedules: dict[str, Schedule]  # by lowercase department
     member_schedules: dict[str, Schedule]  # by lowercase member code; these override the department
-    note: str = ""  # set when these came from the copy on this PC
 
     def schedule_for(self, code: str, department: str) -> Optional[Schedule]:
         return self.member_schedules.get(code.casefold()) or self.department_schedules.get(department.casefold())
+
+
+@dataclass(frozen=True)
+class Settings:
+    organizations: dict[str, Organization]  # by organization_key
+    path: Path  # the settings file, for messages
+    note: str = ""  # set when these came from the copy on this PC
+
+    def organization(self, company: str) -> Organization:
+        """The settings for the organization an export comes from, and never another one's."""
+        if not company.strip():
+            raise UnsupportedExport(
+                "This file doesn't say which organization it's from, so Punch Clock can't tell whose "
+                "supervisors and work schedules to use. Export it from Jibble again."
+            )
+        found = self.organizations.get(organization_key(company))
+        if found is None:
+            listed = ", ".join(o.name for o in self.organizations.values()) or "none yet"
+            raise UnsupportedExport(
+                f'This file is from {company}, but the settings file has no section for "{company}":'
+                f"\n\n{self.path}\n\nAdd one under organizations, spelled as it is here, with its supervisors "
+                f"and work schedules, then try again.\n\nOrganizations in the settings file: {listed}."
+            )
+        return found
+
+
+class LayoutMistake(ValueError):
+    """A mistake in the settings file, explained in words its editor can follow."""
+
+
+def organization_key(name: str) -> str:
+    """Capitals and extra spaces don't make a different organization."""
+    return " ".join(name.split()).casefold()
 
 
 def _app_data() -> Path:
@@ -64,23 +101,45 @@ def _schedule(entry: dict) -> Schedule:
     return Schedule(start, end, days)
 
 
-def _parse(data: bytes, note: str = "") -> Settings:
-    """Accepts the byte order mark Notepad can add."""
-    settings = json.loads(data.decode("utf-8-sig"))
-    supervisors = settings["supervisors"]
-    if not all(isinstance(name, str) for name in supervisors.values()):
-        raise ValueError("Each supervisor must be a name in quotes, or blank.")
-    return Settings(
+def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
+    """JSON would quietly keep only the last of two sections with the same name."""
+    seen: set[str] = set()
+    for key, _ in pairs:
+        if organization_key(key) in seen:
+            raise LayoutMistake(f'"{key}" appears twice in the same place.')
+        seen.add(organization_key(key))
+    return dict(pairs)
+
+
+def _organization(name: str, entry: dict) -> Organization:
+    supervisors = entry["supervisors"]
+    if not all(isinstance(person, str) for person in supervisors.values()):
+        raise LayoutMistake(f"{name}: each supervisor must be a name in quotes, or blank.")
+    return Organization(
+        name,
         supervisors,
-        {name.casefold(): _schedule(entry) for name, entry in settings["department_schedules"].items()},
-        {code.casefold(): _schedule(entry) for code, entry in settings["member_schedules"].items()},
-        note,
+        {department.casefold(): _schedule(hours) for department, hours in entry["department_schedules"].items()},
+        {code.casefold(): _schedule(hours) for code, hours in entry["member_schedules"].items()},
     )
+
+
+def _parse(data: bytes, path: Path, note: str = "") -> Settings:
+    """Accepts the byte order mark Notepad can add."""
+    settings = json.loads(data.decode("utf-8-sig"), object_pairs_hook=_no_repeats)
+    if "organizations" not in settings and "supervisors" in settings:
+        raise LayoutMistake(
+            "It's laid out the old way, for a single organization. Put each organization's supervisors, "
+            "department_schedules and member_schedules in a section of its own under organizations."
+        )
+    organizations = {organization_key(name): _organization(name, entry) for name, entry in settings["organizations"].items()}
+    return Settings(organizations, path, note)
 
 
 def _checked(data: bytes, path: Path) -> Settings:
     try:
-        return _parse(data)
+        return _parse(data, path)
+    except LayoutMistake as error:
+        raise UnsupportedExport(f"The settings file has a mistake in it:\n\n{path}\n\n{error}") from error
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         raise UnsupportedExport(f"The settings file has a mistake in it:\n\n{path}\n\nDetails: {error!r}") from error
 
@@ -119,6 +178,7 @@ def _load_saved_copy(path: Path) -> Settings:
         saved_on = date.fromtimestamp(copy.stat().st_mtime)
         return _parse(
             copy.read_bytes(),
+            path,
             f"Used the settings saved on this PC on {saved_on}, because the settings file couldn't be reached.",
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:

@@ -1,8 +1,17 @@
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from sample_export import write_settings
 
 from punch_clock import reports, settings
+
+
+def pytest_configure(config):
+    """Windows stops at 260 characters, and pytest's usual temp folders use up much of that."""
+    if not config.option.basetemp:
+        config.option.basetemp = str(Path(tempfile.gettempdir()) / "punch-clock-tests")
 
 
 @pytest.fixture(autouse=True)

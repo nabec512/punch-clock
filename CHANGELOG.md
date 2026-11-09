@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+Works for more than one organization, without mixing up their supervisors and schedules.
+- The settings file now has a section for each organization, named as Jibble writes it at the top of the export. Two organizations can each have a department with the same name, such as `Production`, with different supervisors and hours. Before, an export from one organization could be given another one's supervisor and schedule.
+- **The settings file must be changed to the new layout when this version is installed.** Move the existing `supervisors`, `department_schedules` and `member_schedules` into a section under `organizations` named for that organization. The app refuses a file in the old layout and says how to fix it.
+- An export from an organization with no section in the settings file is refused, with a message giving the name to add.
+- The week's folder and each supervisor's files now start with the organization's name, so each organization's reports for a week can sit side by side.
+
 ## 0.5.0
 
 Lets each supervisor export just their own departments, and shows departments in the review spreadsheet.

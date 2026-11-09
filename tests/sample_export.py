@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 import openpyxl
 
 WEEK_START = date(2026, 3, 2)
-COMPANY = "Example Manufacturing Inc."
+COMPANY = "Example Co."
 TIMEZONE = "America/Vancouver"
 ZERO = "0h 00m"
 
@@ -31,9 +31,14 @@ class Person:
     punches: list[tuple] = field(default_factory=list)
 
 
-def write_settings(path, supervisors=None, departments=None, members=None) -> None:
-    """A settings file like the real one."""
-    settings = {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
+def organization(supervisors=None, departments=None, members=None) -> dict:
+    """One organization's section of the settings file."""
+    return {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
+
+
+def write_settings(path, supervisors=None, departments=None, members=None, others=None) -> None:
+    """A settings file like the real one, for COMPANY plus any ``others`` by name."""
+    settings = {"organizations": {COMPANY: organization(supervisors, departments, members), **(others or {})}}
     with open(path, "w", encoding="utf-8") as file:
         json.dump(settings, file, ensure_ascii=False)
 
@@ -102,7 +107,8 @@ def _daily_minutes(person: Person, offset: int, week_start: date) -> tuple[int, 
 
 
 def build_workbook(
-    people: list[Person] | None = None, week_start: date = WEEK_START, filtered_out: list[Person] | None = None
+    people: list[Person] | None = None, week_start: date = WEEK_START, filtered_out: list[Person] | None = None,
+    company: str = COMPANY,
 ) -> openpyxl.Workbook:
     """filtered_out people appear only in Raw Time Entries, as when Jibble's position filter leaves them out."""
     people = default_people() if people is None else people
@@ -113,16 +119,16 @@ def build_workbook(
     period = f"{dates[0]:%d %B %Y} - {dates[6]:%d %B %Y}"
     payroll = {p.code: [_daily_minutes(p, i, week_start) for i in range(7)] for p in people}
 
-    _team_sheet(team, people, dates, period, payroll)
+    _team_sheet(team, people, dates, period, payroll, company)
     for person in people:
-        _individual_sheet(workbook, person, dates, period, payroll[person.code])
+        _individual_sheet(workbook, person, dates, period, payroll[person.code], company)
     _timesheet_sheet(workbook, people, dates, payroll)
     _entries_sheet(workbook, [*people, *(filtered_out or [])], dates)
     return workbook
 
 
-def _team_sheet(sheet, people, dates, period, payroll) -> None:
-    sheet["A1"], sheet["M1"] = "Weekly Timesheets", COMPANY
+def _team_sheet(sheet, people, dates, period, payroll, company) -> None:
+    sheet["A1"], sheet["M1"] = "Weekly Timesheets", company
     sheet["A3"], sheet["B3"] = "Week", period
     sheet["A5"], sheet["B5"], sheet["D5"], sheet["F5"] = "Legend", "Public holiday", "Rest day", "Time off"
     for i, day in enumerate(dates):
@@ -162,9 +168,9 @@ def _team_sheet(sheet, people, dates, period, payroll) -> None:
     sheet.cell(row + 3, 13, f"Exported on {dates[0]:%d %B %Y}")
 
 
-def _individual_sheet(workbook, person, dates, period, daily) -> None:
+def _individual_sheet(workbook, person, dates, period, daily, company) -> None:
     sheet = workbook.create_sheet(f"{person.name} ({person.code}) Summary"[:31])
-    sheet["A1"], sheet["M1"] = "Weekly Timesheets", COMPANY
+    sheet["A1"], sheet["M1"] = "Weekly Timesheets", company
     sheet["A3"], sheet["B3"] = "Week", period
     sheet["A5"], sheet["B5"] = "Member", person.name
     sheet["A6"], sheet["B6"] = "Code", person.code

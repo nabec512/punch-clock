@@ -197,7 +197,8 @@ def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: Sc
 
     checks: list[Check] = []
     for employee in employees.values():
-        _check_days(employee, dates, schedule_for)
+        _check_days(employee, dates)
+        assign_schedule(employee, schedule_for)
     _check_individual_sheets(workbook, employees, dates, checks)
     _check_team_summary(team_rows, employees, checks)
     _check_calculated_gross(employees, dates, checks)
@@ -420,12 +421,26 @@ def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: lis
 # --- Cross-checks ------------------------------------------------------------
 
 
-def _check_days(employee: Employee, dates: list[date], schedule_for: ScheduleLookup) -> None:
+def assign_schedule(employee: Employee, schedule_for: ScheduleLookup) -> None:
+    """Schedules can be given once the export is read, as they depend on which organization it's from.
+
+    Only paid hours and overtime depend on the schedule, and the cross-checks don't use them.
+    """
+    schedule = schedule_for(employee.code, employee.department)
+    for record in employee.days.values():
+        record.schedule = schedule
+
+
+def assign_schedules(export: WeeklyExport, schedule_for: ScheduleLookup) -> None:
+    for employee in export.employees:
+        assign_schedule(employee, schedule_for)
+
+
+def _check_days(employee: Employee, dates: list[date]) -> None:
     if not employee.has_position:
         employee.notes.append("Position is missing in Jibble.")
     for day in dates:
         record = employee.days.setdefault(day, DayRecord(day=day))
-        record.schedule = schedule_for(employee.code, employee.department)
         issues = record.issues
         if record.row is None:
             issues.append("Daily source row is missing.")
