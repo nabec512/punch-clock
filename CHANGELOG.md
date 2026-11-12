@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+Explains what to do when someone's position changed during the week.
+- Jibble's position filter picks people by their position now, but each punch keeps the position the person had when they made it. So in the week someone changes position, an export filtered on their old department leaves them out of everything except their punches. The app still refuses that file, so their hours aren't lost, but the message now names the person and says to export again with their new position selected as well.
+
 ## 0.6.0
 
 Works for more than one organization, without mixing up their supervisors and schedules.

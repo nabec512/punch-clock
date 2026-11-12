@@ -55,6 +55,8 @@ The `Team Summary` sheet is also used, for the week, company name and team total
 
 To make reports for just some departments, filter the export by position in Jibble. Jibble still lists everyone's punches in `Raw Time Entries`, so the app skips punches from departments the rest of the file leaves out, and the validation file says how many it skipped.
 
+Jibble's filter picks people by their position now, but each punch keeps the position the person had when they made it. So in the week someone changes position, a filter on their old department leaves them out, and the app refuses the file rather than leave out their hours. Export again with their new position selected as well. Their hours go to their old department's supervisor, as their punches say, and the other department's files can be set aside.
+
 ## Weekly use
 
 **Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. The week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.

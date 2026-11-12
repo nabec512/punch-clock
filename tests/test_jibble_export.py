@@ -246,13 +246,16 @@ def test_position_filtered_export_skips_punches_from_other_departments():
 
 def test_punches_from_someone_missing_in_a_covered_department_are_refused():
     missing = Person("Casey Moss", "CM-1", "Assembly", [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")])
-    with pytest.raises(UnsupportedExport, match="isn't in the Raw Timesheets sheet, even though their department is"):
+    # Someone whose position changed: Jibble's filter picks them by their current position,
+    # but their punches keep the old one, which this file does cover.
+    message = r"Casey Moss \(CM-1\) has punches in Assembly, but Jibble left them out.*current position selected"
+    with pytest.raises(UnsupportedExport, match=message):
         read(build_workbook(filtered_out=[missing]))
 
 
 def test_a_supervisor_tag_does_not_hide_a_missing_person():
     missing = Person("Casey Moss", "CM-1", "Receiving - Supervisor", [(0, "In", "08:00:00", "")])
-    with pytest.raises(UnsupportedExport, match="even though their department is"):
+    with pytest.raises(UnsupportedExport, match="has punches in Receiving - Supervisor, but Jibble left them out"):
         read(build_workbook(filtered_out=[missing]))
 
 
@@ -260,7 +263,7 @@ def test_missing_person_is_refused_when_entries_have_no_position_column():
     workbook = build_workbook(filtered_out=_other_departments()[:1])
     sheet = workbook["Raw Time Entries"]
     sheet[f"{column_letter(sheet, 'Position')}2"] = None
-    with pytest.raises(UnsupportedExport, match="even though their department is"):
+    with pytest.raises(UnsupportedExport, match=r"Jordan Park \(JP-1\) has punches but isn't in the Raw Timesheets sheet"):
         read(workbook)
 
 

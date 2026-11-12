@@ -365,18 +365,25 @@ def _outside_export(employees: dict[str, Employee], cells: dict, where: str) -> 
 
     Jibble's position filter leaves people out of every sheet except Raw Time Entries.
     Skipping is only safe when that person's whole department is left out: someone missing
-    from a department the file does cover means the sheets really disagree.
+    from a department the file does cover would lose hours from that department's report.
+    That happens when someone changes position: the filter picks people by their position
+    now, but each punch keeps the position they had when they made it.
     """
     code = _text(cells["Member Code"])
     if not code or code in employees:
         return False
-    if "Position" in cells:
-        covered = {e.department.casefold() for e in employees.values()}
-        if _department_of(cells["Position"]) not in covered:
-            return True
+    person = f"{_text(cells['Full Name'])} ({code})"
+    if "Position" not in cells:
+        raise UnsupportedExport(
+            f"{where}: {person} has punches but isn't in the {TIMESHEETS} sheet. Export the file from Jibble again."
+        )
+    covered = {e.department.casefold() for e in employees.values()}
+    if _department_of(cells["Position"]) not in covered:
+        return True
     raise UnsupportedExport(
-        f"{where}: this person has punches but isn't in the {TIMESHEETS} sheet, "
-        "even though their department is. Export the file from Jibble again."
+        f"{where}: {person} has punches in {_text(cells['Position'])}, but Jibble left them out of the rest "
+        "of this file, so their hours would be missing from the reports. This happens when someone's position "
+        "in Jibble changes after they punch. Export again with their current position selected too."
     )
 
 
