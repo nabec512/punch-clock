@@ -63,8 +63,10 @@ Jibble's filter picks people by their position now, but each punch keeps the pos
 
 **Step 2: supervisors review.** In their Excel file, each supervisor:
 
-- Enters any adjustment in minutes, added to Net: `15` adds 15 minutes, `-15` removes 15 minutes, and `0` means no change. Overtime updates by itself.
-- Types the approved hours as `h:mm` on any orange row, where the punches are incomplete.
+- Checks each day's **Regular hours**, **Overtime hours** and **Total approved hours**. The total is regular plus overtime.
+- Enters any adjustment in minutes, in steps of 15, added to the total approved hours: `15` adds 15 minutes, `-15` removes 15 minutes, and `0` means no change. Regular and overtime hours update by themselves.
+- Adds the time for anyone who forgot to punch as an adjustment, for example `300` for 5 hours. Every day of the week has a row, including Saturday and Sunday, so a forgotten weekend shift can be entered too.
+- Types the total approved hours as `h:mm` in 15-minute steps on any orange row, where the punches are incomplete.
 - Adds comments if needed.
 - Chooses **Yes** under **Reviewed** in each employee's **Week total** row.
 
@@ -93,18 +95,39 @@ Each supervisor's files hold only their own departments.
 | Item | Rule |
 |---|---|
 | Gross | Sum of completed In/Out sessions, rounded once per day to the nearest minute. Clocked-out time isn't counted. |
-| Lunch | 30 minutes unpaid per worked day, even if the employee also clocked out that day. It's capped at gross, so net never goes below zero. |
+| Lunch | 30 minutes unpaid per worked day, even if the employee also clocked out that day. It's capped at gross, so net never goes below zero. There's no lunch on [weekend hours](#weekend-hours). |
 | Net | Gross minus lunch. |
-| Paid | Net by the schedule. Time before the start isn't paid. Arriving up to 5 minutes late counts as on time, so 8:05 AM counts as 8:00 AM on a schedule starting then, and 8:06 AM counts from 8:06 AM. Time under 15 minutes past the scheduled hours isn't paid. |
-| Approved | Paid, plus the supervisor's adjustment. On an incomplete day, the hours the supervisor typed. |
-| Overtime | Starts 15 minutes past the scheduled hours, counted from the end of those hours. On an 8-hour schedule, approved hours of 8:15 give 0:15 of overtime and 8:14 give none. All hours on a scheduled day off are overtime. Jibble's overtime isn't used. |
+| Paid | Net by the schedule. Time before the start isn't paid. Arriving up to 5 minutes late counts as on time, so 8:05 AM counts as 8:00 AM on a schedule starting then, and 8:06 AM counts from 8:06 AM. Time under 15 minutes past the scheduled hours isn't paid. Then it's rounded down to a 15-minute block. |
+| Total approved hours | Paid, plus the supervisor's adjustment. On an incomplete day, the hours the supervisor typed. Always in 15-minute blocks. |
+| Overtime hours | Starts 15 minutes past the employee's scheduled hours, counted from the end of those hours, in 15-minute blocks. On an 8-hour schedule, 8h 22m paid gives 8:00 regular and 0:15 overtime, and 8h 14m gives 8:00 regular and no overtime. All hours on a scheduled day off are overtime. Jibble's overtime isn't used. |
+| Regular hours | Total approved hours less overtime hours. |
 | Punch pairs | Each day's punches are paired in time order, ignoring Jibble's In and Out labels. |
 | Incomplete punches | A day with an odd number of punches is missing one. That day's and that week's gross and net show `MISSING` until reviewed. |
 | No punches | Shown as `-`, not `0:00`. It doesn't confirm an absence. |
 
-For an 8-hour span with a 20-minute gap, gross is 7:40 and net is 7:10, so 50 minutes are unpaid in total. If the employee's clocked-out time was their lunch, the supervisor can add the 30 minutes back as an adjustment.
+For an 8-hour span with a 20-minute gap, gross is 7:40 and net is 7:10, so 50 minutes are unpaid in total, and 7:00 is approved after rounding down. If the employee's clocked-out time was their lunch, the supervisor can add the 30 minutes back as an adjustment.
 
-To change the lunch length, grace period or overtime rule, edit the numbers at the top of [`hours.py`](src/punch_clock/hours.py) and the wording in [`pdf_report.py`](src/punch_clock/pdf_report.py), [`review_workbook.py`](src/punch_clock/review_workbook.py) and [`validation_report.py`](src/punch_clock/validation_report.py).
+On an 8:00 AM to 4:30 PM schedule:
+
+| Punches | Regular hours | Overtime hours | Total approved hours |
+|---|---|---|---|
+| 8:06 AM to 4:30 PM | 7:45 | 0:00 | 7:45 |
+| 8:05 AM to 4:30 PM | 8:00 | 0:00 | 8:00 |
+| 8:00 AM to 4:44 PM | 8:00 | 0:00 | 8:00 |
+| 8:00 AM to 4:52 PM | 8:00 | 0:15 | 8:15 |
+| 8:00 AM to 5:00 PM | 8:00 | 0:30 | 8:30 |
+
+### Weekend hours
+
+In the busy season, some employees come in on days off for a short shift with no lunch. The settings file can give each day off its own hours, for example 7:30 AM to 12:30 PM on Saturday. On a day off with hours set:
+
+- No lunch is deducted.
+- Pay follows those hours like any schedule: arriving early isn't paid, up to 5 minutes late counts as on time, and under 15 minutes past the end isn't paid.
+- All of it is overtime.
+
+A day off with no hours set works as before: lunch is deducted, hours are paid as worked, and all of it is overtime.
+
+To change the lunch length, grace period, overtime rule or block length, edit the numbers at the top of [`hours.py`](src/punch_clock/hours.py) and the wording in [`pdf_report.py`](src/punch_clock/pdf_report.py), [`review_workbook.py`](src/punch_clock/review_workbook.py) and [`validation_report.py`](src/punch_clock/validation_report.py).
 
 ## The settings file
 
@@ -120,10 +143,15 @@ The file has a section for each organization, because organizations can have dep
 {
   "organizations": {
     "Example Co.": {
+      "weekend_schedule": {
+        "Sat": { "start": "07:30", "end": "12:30" },
+        "Sun": { "start": "07:30", "end": "12:30" }
+      },
       "supervisors": { "Assembly": "Avery Lee", "Receiving": "" },
       "department_schedules": {
         "Assembly": { "start": "08:00", "end": "16:30" },
-        "Receiving": { "start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"] }
+        "Receiving": { "start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"] },
+        "Shipping": { "start": "08:00", "end": "16:30", "weekend": { "Sat": { "start": "04:30", "end": "09:30" } } }
       },
       "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } }
     },
@@ -142,8 +170,10 @@ The file has a section for each organization, because organizations can have dep
 | `supervisors` | Who reviews each department. Leave a name blank, or the department out, and accounting reviews those employees |
 | `department_schedules` | Hours for each department, matched to the Jibble position without any `- Supervisor` ending |
 | `member_schedules` | Hours for anyone who differs from their department, by Jibble member code |
-| `start`, `end` | 24-hour times. The paid hours are the time between them, less the 30-minute lunch |
+| `start`, `end` | 24-hour times on the quarter hour (`:00`, `:15`, `:30` or `:45`). The paid hours are the time between them, less the 30-minute lunch |
 | `days` | Days worked. Leave it out for Monday to Friday |
+| `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
+| `weekend` | Optional, on a department or member schedule. Changes the organization's weekend hours one day at a time. Above, Shipping starts at 4:30 AM on Saturday and keeps the organization's Sunday hours. A member schedule replaces the department's, so it starts again from the organization's weekend hours |
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.
 

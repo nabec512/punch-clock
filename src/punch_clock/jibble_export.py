@@ -86,7 +86,8 @@ class DayRecord:
     @property
     def hours(self) -> DayHours:
         day_off = self.schedule is not None and self.day.weekday() not in self.schedule.days
-        return calculate_day(self.punches, self.row is not None, self.schedule, day_off)
+        weekend = self.schedule.weekend_for(self.day.weekday()) if day_off else None
+        return calculate_day(self.punches, self.row is not None, self.schedule, day_off, weekend)
 
 
 @dataclass

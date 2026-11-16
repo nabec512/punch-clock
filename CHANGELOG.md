@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+Weekend hours, 15-minute blocks and clearer hour columns, after the first week of supervisor reviews.
+- Hours are paid in 15-minute blocks, always rounded down, so supervisors no longer adjust a few minutes at a time. Overtime is still measured against each employee's own schedule: on an 8-hour day, 8h 22m gives 8:00 regular and 0:15 overtime, and an 8:06 AM arrival gives 7:45. Adjustments and typed hours go in steps of 15 minutes.
+- The review spreadsheet and PDF now show **Regular hours**, **Overtime hours** and **Total approved hours** on each day and on the week's total, instead of approved hours that included overtime.
+- Weekend hours: each organization in the settings file can set hours for days off, such as Saturday and Sunday from 7:30 AM to 12:30 PM, and a department or member can change them a day at a time. On those days no lunch is deducted, pay follows those hours, and all of it is overtime. Without them, a day off works as before.
+- Every day of the week now has a row, including Saturday and Sunday without punches, so a forgotten weekend shift can be entered as an adjustment.
+- The instructions at the top of the review spreadsheet no longer stay on screen when scrolling. Only the employee column stays fixed.
+- **Schedule times in the settings file must now be on the quarter hour** (`:00`, `:15`, `:30` or `:45`). A file with other times is refused with a message naming the time.
+
 ## 0.7.0
 
 Explains what to do when someone's position changed during the week.

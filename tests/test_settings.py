@@ -313,3 +313,63 @@ def test_files_say_which_organization_they_are_for(tmp_path):
         "Second Example Ltd. - Morgan Blake - Production - 2026-03-02 - Printable.pdf",
         "Second Example Ltd. - Morgan Blake - Production - 2026-03-02.xlsx",
     ]
+
+
+# --- Weekend hours ---------------------------------------------------------------
+
+SATURDAY = {"start": "07:30", "end": "12:30"}
+SUNDAY = {"start": "09:00", "end": "13:00"}
+EARLY = {"start": "04:30", "end": "09:30"}
+
+
+def weekend_hours(code="anyone", department="Assembly"):
+    schedule = settings.load().organization(COMPANY).schedule_for(code, department)
+    return [schedule.weekend_for(day).label if schedule.weekend_for(day) else None for day in range(7)]
+
+
+def test_the_organizations_weekend_hours_reach_every_schedule():
+    write_settings(settings.file_path(), departments={"Assembly": DAY_SHIFT}, weekend={"Sat": SATURDAY, "Sun": SUNDAY})
+    hours = weekend_hours()
+    assert hours[5] == "7:30 AM to 12:30 PM" and hours[6] == "9:00 AM to 1:00 PM"
+    assert hours[0] is None  # a working day
+    sat = settings.load().organization(COMPANY).schedule_for("anyone", "Assembly").weekend_for(5)
+    assert (sat.lunch, sat.full_minutes) == (0, 300)
+
+
+def test_a_department_can_change_one_weekend_day():
+    departments = {"Assembly": DAY_SHIFT, "Shipping": {**DAY_SHIFT, "weekend": {"Sat": EARLY}}}
+    write_settings(settings.file_path(), departments=departments, weekend={"Sat": SATURDAY, "Sun": SUNDAY})
+    assert weekend_hours(department="Shipping")[5:] == ["4:30 AM to 9:30 AM", "9:00 AM to 1:00 PM"]
+    assert weekend_hours(department="Assembly")[5] == "7:30 AM to 12:30 PM"
+
+
+def test_a_member_can_change_their_weekend_hours():
+    members = {"XY-1": {**DAY_SHIFT, "weekend": {"Sun": EARLY}}}
+    write_settings(settings.file_path(), departments={"Assembly": DAY_SHIFT}, members=members, weekend={"Sat": SATURDAY})
+    assert weekend_hours("XY-1")[5:] == ["7:30 AM to 12:30 PM", "4:30 AM to 9:30 AM"]
+
+
+def test_friday_hours_only_apply_to_a_crew_with_friday_off():
+    write_settings(settings.file_path(), departments={"Assembly": DAY_SHIFT, "Welding": LONG_SHIFT}, weekend={"Fri": SATURDAY})
+    assert weekend_hours(department="Assembly")[4] is None
+    assert weekend_hours(department="Welding")[4] == "7:30 AM to 12:30 PM"
+
+
+def test_without_weekend_hours_a_day_off_works_as_before():
+    share(departments={"Assembly": DAY_SHIFT})
+    assert set(weekend_hours()) == {None}
+
+
+@pytest.mark.parametrize(
+    "departments, weekend, message",
+    [
+        pytest.param({"Assembly": {"start": "08:10", "end": "16:30"}}, None, "08:10 isn't on the quarter hour", id="schedule"),
+        pytest.param({}, {"Sat": {"start": "07:30", "end": "12:20"}}, "12:20 isn't on the quarter hour", id="weekend"),
+        pytest.param({}, {"Saturday": SATURDAY}, '"Saturday" isn\'t a day', id="day name"),
+        pytest.param({}, {"Sat": {"start": "07:30"}}, "need a start and an end", id="missing end"),
+    ],
+)
+def test_weekend_and_quarter_hour_mistakes_are_explained(departments, weekend, message):
+    write_settings(settings.file_path(), departments=departments, weekend=weekend)
+    with pytest.raises(UnsupportedExport, match=message):
+        settings.load()

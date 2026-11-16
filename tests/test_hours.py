@@ -3,6 +3,7 @@ from datetime import datetime, time
 import pytest
 
 from punch_clock.hours import (
+    BLOCK_MINUTES,
     DOUBLE_PUNCH_NOTE,
     SWAPPED_NOTE,
     Punch,
@@ -15,12 +16,25 @@ from punch_clock.hours import (
 
 DAY_SHIFT = Schedule(time(8, 0), time(16, 30), frozenset(range(5)))
 LONG_SHIFT = Schedule(time(7, 0), time(17, 30), frozenset(range(4)))
+SATURDAY = Schedule(time(7, 30), time(12, 30), lunch=0)
+SUNDAY = Schedule(time(9, 0), time(13, 0), lunch=0)
+WEEKEND_SHIFT = Schedule(time(8, 0), time(16, 30), frozenset(range(5)), weekend=((5, SATURDAY), (6, SUNDAY)))
 
 
-def day(*times, kinds=None):
-    """Punches alternating In/Out by default; each time is (hour, minute, second)."""
+def day(*times, kinds=None, date=(2026, 3, 2)):
+    """Punches alternating In/Out by default; each time is (hour, minute, second). 2 March 2026 is a Monday."""
     kinds = kinds or ["In" if i % 2 == 0 else "Out" for i in range(len(times))]
-    return [Punch(kind, datetime(2026, 3, 2, *time)) for kind, time in zip(kinds, times)]
+    return [Punch(kind, datetime(*date, *time)) for kind, time in zip(kinds, times)]
+
+
+SATURDAY_DATE, SUNDAY_DATE = (2026, 3, 7), (2026, 3, 8)
+
+
+def weekend_day(first, last, date=SATURDAY_DATE):
+    weekday = datetime(*date).weekday()
+    return calculate_day(
+        day(first, last, date=date), schedule=WEEKEND_SHIFT, day_off=True, weekend=WEEKEND_SHIFT.weekend_for(weekday)
+    )
 
 
 def totals(*times):
@@ -143,9 +157,9 @@ def test_overtime_is_anything_over_eight_paid_hours(start, end, overtime):
         pytest.param((7, 40, 0), (16, 30, 0), 480, 0, id="coffee before the buzzer isn't paid"),
         pytest.param((8, 5, 0), (16, 30, 0), 480, 0, id="5 minutes late is forgiven"),
         pytest.param((8, 5, 59), (16, 30, 0), 480, 0, id="still reads as 8:05"),
-        pytest.param((8, 6, 0), (16, 30, 0), 474, 0, id="6 minutes late counts from the punch"),
-        pytest.param((8, 0, 0), (16, 25, 0), 475, 0, id="no grace for leaving early"),
-        pytest.param((8, 5, 0), (16, 25, 0), 475, 0, id="late forgiven, early departure not"),
+        pytest.param((8, 6, 0), (16, 30, 0), 465, 0, id="6 minutes late counts from the punch, then rounds down"),
+        pytest.param((8, 0, 0), (16, 25, 0), 465, 0, id="no grace for leaving early"),
+        pytest.param((8, 5, 0), (16, 25, 0), 465, 0, id="late forgiven, early departure not"),
         pytest.param((8, 0, 0), (16, 40, 0), 480, 0, id="lingering past the buzzer isn't paid"),
         pytest.param((8, 0, 0), (16, 44, 0), 480, 0, id="14 minutes past isn't paid"),
         pytest.param((8, 0, 0), (16, 44, 59), 480, 0, id="14:59 past isn't paid"),
@@ -219,3 +233,92 @@ def test_format_minutes():
     assert format_minutes(232) == "3:52"
     assert format_minutes(5) == "0:05"
     assert format_minutes(None) == "MISSING"
+
+
+# --- 15-minute blocks -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "first, last, regular, overtime",
+    [
+        pytest.param((8, 6, 0), (16, 30, 0), 465, 0, id="7:54 rounds down to 7:45"),
+        pytest.param((8, 5, 0), (16, 30, 0), 480, 0, id="5 minutes late is still on time"),
+        pytest.param((8, 0, 0), (16, 44, 0), 480, 0, id="under 15 minutes past isn't paid"),
+        pytest.param((8, 0, 0), (16, 52, 0), 480, 15, id="22 minutes over is 15 of overtime"),
+        pytest.param((8, 0, 0), (16, 59, 0), 480, 15, id="29 minutes over is still 15"),
+        pytest.param((8, 0, 0), (17, 0, 0), 480, 30, id="30 minutes over"),
+        pytest.param((8, 6, 0), (16, 52, 0), 480, 15, id="late, then stayed: overtime is past the full day"),
+    ],
+)
+def test_regular_and_overtime_go_in_blocks_against_the_schedule(first, last, regular, overtime):
+    hours = calculate_day(day(first, last), schedule=DAY_SHIFT)
+    assert (hours.regular, hours.overtime, hours.paid) == (regular, overtime, regular + overtime)
+
+
+def test_overtime_on_a_ten_hour_schedule_is_measured_from_ten_hours():
+    hours = calculate_day(day((7, 0, 0), (17, 52, 0)), schedule=LONG_SHIFT)
+    assert (hours.regular, hours.overtime) == (600, 15)
+
+
+def test_no_schedule_rounds_down_too():
+    hours = calculate_day(day((8, 0, 0), (16, 44, 0)))  # 8:14 net
+    assert (hours.regular, hours.overtime, hours.paid) == (480, 0, 480)
+
+
+@pytest.mark.parametrize("first, last", [((8, 6, 0), (16, 30, 0)), ((7, 0, 0), (18, 7, 0)), ((9, 0, 0), (9, 50, 0))])
+def test_paid_is_always_whole_blocks_and_regular_plus_overtime(first, last):
+    for schedule in (None, DAY_SHIFT, LONG_SHIFT):
+        hours = calculate_day(day(first, last), schedule=schedule)
+        assert hours.paid % BLOCK_MINUTES == 0 and hours.regular + hours.overtime == hours.paid
+
+
+def test_rounding_alone_adds_no_note():
+    assert calculate_day(day((8, 0, 0), (16, 30, 0)), schedule=DAY_SHIFT).pay_note == ""
+
+
+def test_missing_hours_have_no_regular_hours():
+    assert calculate_day(day((8, 0, 0))).regular is None
+
+
+# --- Weekend hours --------------------------------------------------------------
+
+
+def test_weekend_hours_have_no_lunch_and_are_all_overtime():
+    hours = weekend_day((7, 30, 0), (12, 30, 0))
+    assert (hours.gross, hours.lunch, hours.net) == (300, 0, 300)
+    assert (hours.regular, hours.overtime, hours.paid) == (0, 300, 300)
+    assert "Saturday hours, 7:30 AM to 12:30 PM" in hours.pay_note and "overtime" in hours.pay_note
+
+
+@pytest.mark.parametrize(
+    "first, last, paid",
+    [
+        pytest.param((7, 25, 0), (12, 35, 0), 300, id="early and lingering aren't paid"),
+        pytest.param((7, 35, 0), (12, 30, 0), 300, id="5 minutes late is on time"),
+        pytest.param((7, 40, 0), (12, 30, 0), 285, id="10 minutes late rounds down"),
+        pytest.param((7, 30, 0), (12, 52, 0), 315, id="staying 22 minutes more"),
+    ],
+)
+def test_weekend_hours_follow_their_own_schedule(first, last, paid):
+    hours = weekend_day(first, last)
+    assert (hours.paid, hours.overtime) == (paid, paid)
+
+
+def test_saturday_and_sunday_can_have_different_hours():
+    assert weekend_day((7, 30, 0), (12, 30, 0), SUNDAY_DATE).paid == 210  # Sunday starts at 9:00, so 9:00 to 12:30
+    assert "Sunday hours, 9:00 AM to 1:00 PM" in weekend_day((9, 0, 0), (13, 0, 0), SUNDAY_DATE).pay_note
+
+
+def test_a_short_weekend_day_isnt_flagged_for_lunch():
+    assert not weekend_day((7, 30, 0), (7, 50, 0)).lunch_capped
+    assert calculate_day(day((7, 30, 0), (7, 50, 0)), schedule=DAY_SHIFT).lunch_capped
+
+
+def test_weekend_hours_only_apply_on_a_day_off():
+    assert WEEKEND_SHIFT.weekend_for(5) is SATURDAY
+    assert Schedule(time(8), time(16, 30), frozenset(range(6)), weekend=((5, SATURDAY),)).weekend_for(5) is None
+
+
+def test_a_day_off_without_weekend_hours_works_as_before():
+    hours = calculate_day(day((7, 0, 0), (11, 0, 0)), schedule=DAY_SHIFT, day_off=True)
+    assert (hours.lunch, hours.paid, hours.overtime) == (30, 210, 210)

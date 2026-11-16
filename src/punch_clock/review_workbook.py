@@ -14,7 +14,7 @@ from xlsxwriter.utility import xl_rowcol_to_cell
 
 from punch_clock.assignments import ReviewGroup
 from punch_clock import __version__
-from punch_clock.hours import OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes
+from punch_clock.hours import BLOCK_MINUTES, OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes
 from punch_clock.jibble_export import DayRecord, Employee, WeeklyExport
 
 REVIEW_SHEET = "Review"
@@ -23,26 +23,29 @@ PUNCH_SHEET = "Punches"
 EMPLOYEE, DATE, CLOCK_IN, CLOCK_OUT, GROSS, LUNCH, NET = (
     "Employee", "Date", "Clock in", "Clock out", "Gross", "Lunch deduction", "Net",
 )
-ADJUSTMENT, APPROVED, OVERTIME, COMMENT, REVIEWED, NOTES = (
-    "Adjustment (minutes)", "Approved hours", "Overtime", "Comment", "Reviewed", "Notes",
+ADJUSTMENT, REGULAR, OVERTIME, TOTAL, COMMENT, REVIEWED, NOTES = (
+    "Adjustment (minutes)", "Regular hours", "Overtime hours", "Total approved hours", "Comment", "Reviewed", "Notes",
 )
 WEEK_TOTAL = "Week total"
 INCOMPLETE = "Incomplete"
 
 COLUMNS = [
     (EMPLOYEE, 34), (DATE, 12), (CLOCK_IN, 10), (CLOCK_OUT, 10), (GROSS, 11), (LUNCH, 11), (NET, 11),
-    (ADJUSTMENT, 12), (APPROVED, 11), (OVERTIME, 11), (COMMENT, 30), (REVIEWED, 10), (NOTES, 44),
+    (ADJUSTMENT, 12), (REGULAR, 11), (OVERTIME, 11), (TOTAL, 14), (COMMENT, 30), (REVIEWED, 10), (NOTES, 44),
 ]
 COLUMN = {label: index for index, (label, _) in enumerate(COLUMNS)}
 
 INSTRUCTIONS = [
     "Only the yellow and orange cells can be changed.",
-    "Adjustment is in minutes, added to Net: 15 adds 15 minutes, -15 removes 15 minutes, 0 means no change.",
+    "Hours are paid in 15-minute blocks, rounded down. Total approved hours = Regular hours + Overtime hours.",
+    "Adjustment is in minutes, in steps of 15, added to the total approved hours: 15 adds 15 minutes, "
+    "-15 removes 15 minutes, 0 means no change. If someone forgot to punch, add their time here, for example 300 for 5 hours.",
     "30 minutes of lunch is taken off every day worked, even if the employee also clocked out. "
-    "If that's wrong, add the minutes back as an adjustment.",
-    "Orange means the punches are incomplete: type the approved hours as h:mm, for example 7:30.",
-    "Approved hours follow the schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time.",
-    "Overtime is worked out for you, and starts 15 minutes past the scheduled hours. An adjustment or typed hours change it too.",
+    "If that's wrong, add the minutes back as an adjustment. Weekend hours have no lunch.",
+    "Orange means the punches are incomplete: type the total approved hours as h:mm in 15-minute steps, for example 7:30.",
+    "Hours follow the schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time.",
+    "Overtime is worked out for you, and starts 15 minutes past the employee's scheduled hours. "
+    "All hours on a day off, such as the weekend, are overtime. An adjustment or typed hours change it too.",
     "When you've finished an employee, go to Reviewed in their Week total row, click the cell that says No, "
     "and choose Yes from the arrow.",
     "When everyone is done, save this file and return it to accounting.",
@@ -106,9 +109,11 @@ def _day_notes(record: DayRecord) -> str:
     hours = record.hours
     notes = []
     if hours.gross is None:
-        notes.append("Punches incomplete: enter the approved hours.")
+        notes.append("Punches incomplete: enter the total approved hours.")
+    elif not record.punches and record.schedule and hours.full_minutes == 0:
+        notes.append("Day off. If they worked, add their time as an adjustment, for example 300 for 5 hours.")
     elif not record.punches:
-        notes.append("Day off." if record.schedule and hours.full_minutes == 0 else "No punches.")
+        notes.append("No punches.")
     if hours.note:
         notes.append(hours.note)
     if hours.pay_note:
@@ -142,9 +147,10 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
 
     last = row - 1
     sheet.autofilter(HEADER_ROW, 0, max(last, HEADER_ROW), len(COLUMNS) - 1)
-    sheet.freeze_panes(HEADER_ROW + 1, 1)
+    # Only the names stay put when scrolling sideways. Freezing the top would hold the instructions on screen too.
+    sheet.freeze_panes(0, 1)
     sheet.conditional_format(
-        HEADER_ROW + 1, COLUMN[APPROVED], max(last, HEADER_ROW + 1), COLUMN[APPROVED],
+        HEADER_ROW + 1, COLUMN[TOTAL], max(last, HEADER_ROW + 1), COLUMN[TOTAL],
         {"type": "cell", "criteria": "<", "value": 0, "format": formats["bad"]},
     )
     first_overtime = xl_rowcol_to_cell(HEADER_ROW + 1, COLUMN[OVERTIME])
@@ -163,24 +169,23 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
 def _write_employee(sheet, formats, export: WeeklyExport, employee: Employee, row: int) -> int:
     first = row
     needs_hours: list[str] = []
+    # Every day, so that a weekend shift with forgotten punches still has a row to enter it on.
     for day in export.dates:
-        record = employee.days[day]
-        if day.weekday() < 5 or record.punches or record.issues:
-            cell = _write_day(sheet, formats, employee, record, row)
-            if cell:
-                needs_hours.append(cell)
-            row += 1
+        cell = _write_day(sheet, formats, employee, employee.days[day], row)
+        if cell:
+            needs_hours.append(cell)
+        row += 1
     _write_week_total(sheet, formats, export, employee, first, row, needs_hours)
     return row + 1
 
 
 def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) -> Optional[str]:
-    """Write one day. Returns the Approved cell if someone must type the hours."""
+    """Write one day. Returns the Total approved cell if someone must type the hours."""
     hours = record.hours
-    excel = row + 1
     net_cell = xl_rowcol_to_cell(row, COLUMN[NET])
     adjust_cell = xl_rowcol_to_cell(row, COLUMN[ADJUSTMENT])
-    approved_cell = xl_rowcol_to_cell(row, COLUMN[APPROVED])
+    total_cell = xl_rowcol_to_cell(row, COLUMN[TOTAL])
+    overtime_cell = xl_rowcol_to_cell(row, COLUMN[OVERTIME])
     # Each pair gets its own line, so a clock-in sits level with its clock-out.
     no_times = "-" if hours.gross is not None else "Missing"
 
@@ -198,32 +203,40 @@ def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) 
 
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
     sheet.write_blank(row, COLUMN[REVIEWED], None, formats["muted"])
-    # From Approved, so a supervisor's adjustment or typed hours count. In whole minutes, as times are fractions of a day.
+    # From the total, so a supervisor's adjustment or typed hours count. In whole minutes, as times are fractions of a day.
     sheet.write_formula(
         row,
         COLUMN[OVERTIME],
-        f'=IF({approved_cell}="","",IF(ROUND({approved_cell}*1440,0)-{hours.full_minutes}>={OVERTIME_STARTS_MINUTES},'
-        f"(ROUND({approved_cell}*1440,0)-{hours.full_minutes})/1440,0))",
+        f'=IF({total_cell}="","",IF(ROUND({total_cell}*1440,0)-{hours.full_minutes}>={OVERTIME_STARTS_MINUTES},'
+        f"(ROUND({total_cell}*1440,0)-{hours.full_minutes})/1440,0))",
         formats["overtime"],
         hours.overtime / 1440 if has_hours else "",
+    )
+    sheet.write_formula(
+        row,
+        COLUMN[REGULAR],
+        f'=IF({total_cell}="","",{total_cell}-{overtime_cell})',
+        formats["duration"],
+        hours.regular / 1440 if has_hours else "",
     )
     sheet.write(row, COLUMN[NOTES], _day_notes(record), formats["notes"])
 
     if hours.gross is None:
         sheet.write_blank(row, COLUMN[ADJUSTMENT], None, formats["muted"])
-        sheet.write_blank(row, COLUMN[APPROVED], None, formats["edit_hours"])
+        sheet.write_blank(row, COLUMN[TOTAL], None, formats["edit_hours"])
         sheet.data_validation(
-            row, COLUMN[APPROVED], row, COLUMN[APPROVED],
+            row, COLUMN[TOTAL], row, COLUMN[TOTAL],
             {
-                "validate": "time",
-                "criteria": "between",
-                "minimum": time(0, 0),
-                "maximum": time(23, 59),
-                "error_title": "Approved hours",
-                "error_message": "Type the hours as h:mm, for example 7:30.",
+                "validate": "custom",
+                "value": (
+                    f"=AND(ISNUMBER({total_cell}),{total_cell}>=0,{total_cell}<1,"
+                    f"MOD(ROUND({total_cell}*1440,0),{BLOCK_MINUTES})=0)"
+                ),
+                "error_title": "Total approved hours",
+                "error_message": "Type the hours as h:mm in 15-minute steps, for example 7:30 or 7:45.",
             },
         )
-        return approved_cell
+        return total_cell
 
     sheet.write_blank(row, COLUMN[ADJUSTMENT], None, formats["edit_number"])
     sheet.data_validation(
@@ -231,16 +244,16 @@ def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) 
         {
             "validate": "custom",
             "value": (
-                f"=AND(ISNUMBER({adjust_cell}),{adjust_cell}=INT({adjust_cell}),ABS({adjust_cell})<=1440,"
+                f"=AND(ISNUMBER({adjust_cell}),MOD({adjust_cell},{BLOCK_MINUTES})=0,ABS({adjust_cell})<=1440,"
                 f"{hours.paid}+{adjust_cell}>=0)"
             ),
             "error_title": "Adjustment",
-            "error_message": "Enter whole minutes, such as 15 or -15. Approved hours can't go below zero.",
+            "error_message": "Enter minutes in steps of 15, such as 15, 30 or -15. Total approved hours can't go below zero.",
         },
     )
     sheet.write_formula(
         row,
-        COLUMN[APPROVED],
+        COLUMN[TOTAL],
         # The schedule's rules set the starting point. A supervisor's adjustment then counts in full.
         f'=IF(AND({net_cell}="",{adjust_cell}=""),"",{hours.paid}/1440+N({adjust_cell})/1440)',
         formats["duration"],
@@ -271,16 +284,14 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
     sheet.write_formula(
         row, COLUMN[ADJUSTMENT], f'=IF(COUNT({adjustments})=0,"",SUM({adjustments}))', formats["total_number"], ""
     )
-    approved_sum = f"SUM({column_range(APPROVED)})"
-    if needs_hours:
-        blanks = "+".join(f"COUNTBLANK({cell})" for cell in needs_hours)
-        approved_formula, cached = f'=IF({blanks}>0,"Needs hours",{approved_sum})', "Needs hours"
-        overtime_formula, cached_overtime = f'=IF({blanks}>0,"Needs hours",SUM({column_range(OVERTIME)}))', "Needs hours"
-    else:
-        approved_formula, cached = f"={approved_sum}", sum(h.paid for h in days) / 1440
-        overtime_formula, cached_overtime = f"=SUM({column_range(OVERTIME)})", sum(h.overtime for h in days) / 1440
-    sheet.write_formula(row, COLUMN[APPROVED], approved_formula, formats["total_duration"], cached)
-    sheet.write_formula(row, COLUMN[OVERTIME], overtime_formula, formats["total_duration"], cached_overtime)
+    blanks = "+".join(f"COUNTBLANK({cell})" for cell in needs_hours)
+    for label, attribute in ((REGULAR, "regular"), (OVERTIME, "overtime"), (TOTAL, "paid")):
+        total_sum = f"SUM({column_range(label)})"
+        if needs_hours:
+            formula, cached = f'=IF({blanks}>0,"Needs hours",{total_sum})', "Needs hours"
+        else:
+            formula, cached = f"={total_sum}", sum(getattr(h, attribute) for h in days) / 1440
+        sheet.write_formula(row, COLUMN[label], formula, formats["total_duration"], cached)
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
     sheet.write(row, COLUMN[REVIEWED], "No", formats["edit_choice"])
     sheet.data_validation(

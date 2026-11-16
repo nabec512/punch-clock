@@ -9,7 +9,10 @@ from punch_clock.jibble_export import ENTRIES, TIMESHEETS, Employee, WeeklyExpor
 
 def _schedule_line(employee: Employee) -> str:
     schedule = next((record.schedule for record in employee.days.values() if record.schedule), None)
-    return f"{employee.department}: {schedule.label if schedule else 'no schedule'}"
+    if not schedule:
+        return f"{employee.department}: no schedule"
+    days_off = schedule.days_off_label
+    return f"{employee.department}: {schedule.label}" + (f"; days off {days_off}" if days_off else "")
 
 
 def build_validation_text(export: WeeklyExport) -> str:
@@ -53,12 +56,15 @@ def build_validation_text(export: WeeklyExport) -> str:
         "Punches are paired in time order within each day, ignoring In/Out labels, because a forgotten "
         "punch swaps them. Jibble's own payroll hours count the time until the next punch as worked.",
         "Gross = sum of sessions rounded once per day to the nearest minute.",
-        "Net = gross minus min(30 minutes, gross) on worked days. Clocked-out gaps don't reduce the lunch.",
+        "Net = gross minus min(30 minutes, gross) on worked days. Clocked-out gaps don't reduce the lunch. "
+        "Days off with weekend hours in the settings file have no lunch.",
         "Days with an odd number of punches remain unavailable. Source payroll checks below retain Jibble values.",
         "Paid = net by each schedule: time before the start isn't paid, an arrival up to 5 minutes late counts as "
-        "on time, and time under 15 minutes past the scheduled hours isn't paid.",
-        "Overtime starts 15 minutes past the scheduled hours, counted from the end of those hours. "
-        "All hours on a scheduled day off are overtime. With no schedule, it starts at 8:15. It isn't taken from Jibble.",
+        "on time, and time under 15 minutes past the scheduled hours isn't paid. On a day off with weekend hours, "
+        "those hours are the schedule. Paid is then rounded down to a 15-minute block.",
+        "Overtime starts 15 minutes past the scheduled hours, counted from the end of those hours, in 15-minute blocks. "
+        "All hours on a scheduled day off are overtime. With no schedule, it starts at 8:15. It isn't taken from Jibble. "
+        "Regular = paid minus overtime.",
         "Zero is preserved. Blank duration propagates as MISSING, never zero. NR means no timestamp.",
         "Times are displayed in the source timezone with seconds; no schedule times are substituted.",
         "Team Summary dash is interpreted as zero only for reconciliation.",
@@ -78,7 +84,8 @@ def build_validation_text(export: WeeklyExport) -> str:
                 hours = record.hours
                 lines.append(
                     f"{employee.code} {day}: gross {format_minutes(hours.gross)}, "
-                    f"lunch {format_minutes(hours.lunch)}, net {format_minutes(hours.net)}"
+                    f"lunch {format_minutes(hours.lunch)}, net {format_minutes(hours.net)}, "
+                    f"regular {format_minutes(hours.regular)}, overtime {format_minutes(hours.overtime)}"
                 )
     lines += ["", "REVIEW FILES"]
     for group in review_groups(export):

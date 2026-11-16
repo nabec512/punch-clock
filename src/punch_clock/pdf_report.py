@@ -19,6 +19,8 @@ from punch_clock.assignments import MISSING_SUPERVISOR_TITLE, ReviewGroup, missi
 from punch_clock.hours import format_minutes, gap_minutes, weekly_total
 from punch_clock.jibble_export import Employee, UnsupportedExport, WeeklyExport
 
+WEEK_TOTAL = "Week total"
+
 INK = colors.HexColor("#183340")
 MUTED = colors.HexColor("#52616A")
 LIGHT = colors.HexColor("#EDF2F4")
@@ -100,36 +102,34 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
     ]
     if missing_supervisor:
         block += [_para(MISSING_SUPERVISOR_TITLE.upper(), 9, WARN, bold=True), Spacer(1, 5)]
-    rows = [["Day / date", "In", "Out", "Gross", "Lunch", "Net", "Paid"]]
+    headings = ["Day / date", "In", "Out", "Gross", "Lunch", "Net", "Regular hours", "Overtime hours", "Total approved hours"]
+    rows: list[list] = [[_para(heading, 9) for heading in headings]]
+    no_punch_rows: list[int] = []
     warnings: list[str] = []
     info: list[str] = []
     pay_notes: dict[str, list[str]] = {}
-    gross_days: list[Optional[int]] = []
-    net_days: list[Optional[int]] = []
+    week = [employee.days[day].hours for day in export.dates]
+    # Every day, so a weekend shift with forgotten punches has a line to write it on.
     for day in export.dates:
         record = employee.days[day]
         hours = record.hours
-        gross_days.append(hours.gross)
-        net_days.append(hours.net)
         label = day.strftime("%a %b %d")
-        if day.weekday() < 5 or record.punches or record.issues:
-            if not hours.sessions:
-                # No punches is not a recorded zero, so it never prints as 0:00.
-                dash = "-" if hours.gross is not None else format_minutes(None)
-                first = "No punches" if hours.gross is not None else "NR"
-                rows.append([label, first, "", dash, dash, dash, dash])
-            for index, session in enumerate(hours.sessions):
-                rows.append(
-                    [
-                        label if index == 0 else "",
-                        _clock(session.start),
-                        _clock(session.end),
-                        format_minutes(hours.gross) if index == 0 else "",
-                        format_minutes(hours.lunch) if index == 0 else "",
-                        format_minutes(hours.net) if index == 0 else "",
-                        format_minutes(hours.paid) if index == 0 else "",
-                    ]
-                )
+        if not hours.sessions:
+            # No punches is not a recorded zero, so it never prints as 0:00.
+            dash = "-" if hours.gross is not None else format_minutes(None)
+            first = "No punches" if hours.gross is not None else "NR"
+            no_punch_rows.append(len(rows))
+            rows.append([label, first, "", *[dash] * 6])
+        for index, session in enumerate(hours.sessions):
+            totals = (hours.gross, hours.lunch, hours.net, hours.regular, hours.overtime, hours.paid)
+            rows.append(
+                [
+                    label if index == 0 else "",
+                    _clock(session.start),
+                    _clock(session.end),
+                    *[format_minutes(value) if index == 0 else "" for value in totals],
+                ]
+            )
         if hours.gaps:
             info.append(_gap_note(day, hours))
         if hours.note:
@@ -146,27 +146,33 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
         warnings.extend(f"{day:%a}: {issue}" for issue in record.issues)
     # These can apply most days, so each gets one line for the week rather than one line a day.
     info += [f"{', '.join(days)}: {note}" for note, days in pay_notes.items()]
-    weekly = [
-        "Weekly gross",
-        format_minutes(weekly_total(gross_days)),
-        "Net",
-        format_minutes(weekly_total(net_days)),
-        "Paid",
-        format_minutes(weekly_total(employee.days[day].hours.paid for day in export.dates)),
-        "Overtime",
-        format_minutes(weekly_total(employee.days[day].hours.overtime for day in export.dates)),
-    ]
-    block += [
-        _table(rows, [100, 85, 85, 70, 60, 70, 70], padding=4),
-        Spacer(1, 6),
-        _table([weekly], [100, 65, 55, 65, 55, 65, 70, 65], header=False),
-    ]
+    # Under the same columns as the days, so each total sits below what it adds up.
+    names = ("gross", "lunch", "net", "regular", "overtime", "paid")
+    rows.append(
+        [_para(WEEK_TOTAL, bold=True), "", "", *[_para(format_minutes(weekly_total(getattr(h, n) for h in week)), bold=True) for n in names]]
+    )
+    # Wide enough for MISSING in every hours column, with nine columns across the page.
+    table = _table(rows, [64, 48, 48, 56, 56, 56, 70, 70, 72], padding=3)
+    table.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("BACKGROUND", (0, -1), (-1, -1), LIGHT),
+                ("LINEABOVE", (0, -1), (-1, -1), 0.8, RULE),
+                *[("SPAN", (1, row), (2, row)) for row in no_punch_rows],
+            ]
+        )
+    )
+    block.append(table)
     for note in dict.fromkeys(info):
         block += [Spacer(1, 4), _para(note, 9, MUTED)]
     for note in dict.fromkeys(warnings):
         block += [Spacer(1, 4), _para(note, 9, WARN)]
     block.append(Spacer(1, 9))
-    block.append(_para("Adjustment: __________  Approved hours: __________  Supervisor: __________________", 9))
+    block.append(
+        _para("Adjustment: ________  Regular hours: ________  Overtime hours: ________  Supervisor: ______________", 9)
+    )
     block.append(Spacer(1, 6))
     return block
 
@@ -311,8 +317,10 @@ def _headcount_page(pdf, export: WeeklyExport, group: Optional[ReviewGroup], chu
     )
     _write_note(
         pdf,
-        "Paid follows each schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time. "
-        "Overtime starts 15 minutes past the scheduled hours, counted from the end of those hours. "
+        "Hours follow each schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time. "
+        "They're paid in 15-minute blocks, rounded down. Total approved hours = regular hours + overtime hours. "
+        "Overtime starts 15 minutes past the employee's scheduled hours, counted from the end of those hours. "
+        "All hours on a day off are overtime, and weekend hours set in the settings file have no lunch. "
         "NR = no recorded timestamp; it does not establish absence. "
         "Full source comparisons are in the validation file.",
         y,

@@ -53,7 +53,8 @@ The flow is `app.py` -> `reports.process_export` -> `jibble_export.load_export` 
 
 - The people using the app aren't technical, so keep text in the window, PDFs and spreadsheets plain.
 - Keep clock times and durations clearly different in code, UI and messages: `8:00 AM` is a time and `8h 00m` is a length of time.
-- There are no night shifts, and employees don't punch out for lunch: a flat 30 minutes is deducted on each worked day.
+- There are no night shifts, and employees don't punch out for lunch: a flat 30 minutes is deducted on each worked day, except on weekend hours (a day off with hours in the settings file), which have no lunch and are all overtime.
+- Paid hours go in 15-minute blocks, always rounded down, and overtime is measured against each employee's own schedule. The review sheet shows Regular hours, Overtime hours and Total approved hours, and the total is the sum of the other two.
 
 ## Testing notes
 

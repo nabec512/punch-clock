@@ -16,7 +16,18 @@ from punch_clock.assignments import (
 )
 from punch_clock.jibble_export import UnsupportedExport, load_export
 from punch_clock.reports import REVIEW_FOLDER, process_export
-from punch_clock.review_workbook import ADJUSTMENT, APPROVED, COMMENT, DATE, EMPLOYEE, INCOMPLETE, REVIEWED, WEEK_TOTAL
+from punch_clock.review_workbook import (
+    ADJUSTMENT,
+    COMMENT,
+    DATE,
+    EMPLOYEE,
+    INCOMPLETE,
+    OVERTIME,
+    REGULAR,
+    REVIEWED,
+    TOTAL,
+    WEEK_TOTAL,
+)
 
 MONDAY = date(2026, 3, 2)
 
@@ -280,8 +291,8 @@ def test_only_input_cells_are_unlocked(processed):
     total = sheet.row_for("Ann Painter", WEEK_TOTAL)
     unlocked = lambda row, label: not sheet.sheet.cell(row, sheet.columns[label]).protection.locked
     assert unlocked(day, ADJUSTMENT) and unlocked(day, COMMENT)
-    assert not unlocked(day, APPROVED) and not unlocked(day, "Net") and not unlocked(day, REVIEWED)
-    assert unlocked(total, REVIEWED) and not unlocked(total, APPROVED)
+    assert not unlocked(day, TOTAL) and not unlocked(day, "Net") and not unlocked(day, REVIEWED)
+    assert unlocked(total, REVIEWED) and not unlocked(total, TOTAL)
 
 
 def test_incomplete_day_unlocks_approved_instead_of_adjustment(tmp_path):
@@ -290,14 +301,14 @@ def test_incomplete_day_unlocks_approved_instead_of_adjustment(tmp_path):
     build_workbook(people).save(source)
     sheet = Sheet(review_file(process_export(source), "Bea"))
     row = sheet.row_for("Ann", MONDAY)
-    assert not sheet.sheet.cell(row, sheet.columns[APPROVED]).protection.locked
+    assert not sheet.sheet.cell(row, sheet.columns[TOTAL]).protection.locked
     assert sheet.sheet.cell(row, sheet.columns[ADJUSTMENT]).protection.locked
     assert sheet.sheet.cell(row, sheet.columns["Clock in"]).value == "8:00 AM"
     assert sheet.sheet.cell(row, sheet.columns["Clock out"]).value == "Missing"
     total = sheet.row_for("Ann", WEEK_TOTAL)
     assert sheet.sheet.cell(total, sheet.columns["Gross"]).value == INCOMPLETE
     assert sheet.sheet.cell(total, sheet.columns["Net"]).value == INCOMPLETE
-    assert sheet.sheet.cell(total, sheet.columns[APPROVED]).value.startswith("=IF(")
+    assert sheet.sheet.cell(total, sheet.columns[TOTAL]).value.startswith("=IF(")
 
 
 def test_daily_totals_are_not_repeated_for_multiple_punch_pairs(tmp_path):
@@ -311,7 +322,7 @@ def test_daily_totals_are_not_repeated_for_multiple_punch_pairs(tmp_path):
     build_workbook(people).save(source)
     sheet = Sheet(review_file(process_export(source), "Bea"))
     rows = [r for r in range(sheet.first, sheet.sheet.max_row + 1) if sheet.sheet.cell(r, sheet.columns[EMPLOYEE]).value == "Ann - Paint"]
-    assert len(rows) == 6  # five weekdays plus the week total, not one row per punch pair
+    assert len(rows) == 8  # every day of the week plus the week total, not one row per punch pair
     assert sheet.sheet.cell(rows[0], sheet.columns["Clock in"]).value == "8:00 AM\n1:00 PM"
     assert sheet.sheet.cell(rows[0], sheet.columns["Clock out"]).value == "12:00 PM\n4:00 PM"
     assert sheet.sheet.cell(rows[1], sheet.columns["Clock in"]).value == "-"  # no punches that day
@@ -394,7 +405,7 @@ def test_swapped_days_raise_no_false_alarms_and_explain_themselves(tmp_path):
     assert sheet.sheet.cell(row, sheet.columns["Clock in"]).value == "8:00 AM"
     assert sheet.sheet.cell(row, sheet.columns["Clock out"]).value == "4:30 PM"
     assert not sheet.sheet.cell(row, sheet.columns[ADJUSTMENT]).protection.locked  # a normal day, not an orange one
-    assert sheet.sheet.cell(row, sheet.columns[APPROVED]).protection.locked
+    assert sheet.sheet.cell(row, sheet.columns[TOTAL]).protection.locked
     assert "swapped" in " ".join(pdf_text(result, "Bea Boss").split())
 
 
@@ -412,11 +423,11 @@ def test_overtime_comes_from_approved_hours_not_jibble(tmp_path):
     long_day = [(0, "In", "08:00:00", ""), (0, "Out", "17:00:00", "")]
     formulas, values = _overtime_file(tmp_path, long_day)
     row = formulas.row_for("Ann", MONDAY)
-    cell = formulas.sheet.cell(row, formulas.columns["Overtime"])
+    cell = formulas.sheet.cell(row, formulas.columns[OVERTIME])
     assert "1440" in cell.value and "480" in cell.value and cell.protection.locked
-    assert round(_as_minutes(values.cell(row, formulas.columns["Overtime"]).value)) == 30
+    assert round(_as_minutes(values.cell(row, formulas.columns[OVERTIME]).value)) == 30
     total = formulas.row_for("Ann", WEEK_TOTAL)
-    assert round(_as_minutes(values.cell(total, formulas.columns["Overtime"]).value)) == 30
+    assert round(_as_minutes(values.cell(total, formulas.columns[OVERTIME]).value)) == 30
     assert "Jibble overtime" not in formulas.columns
 
 
@@ -429,10 +440,10 @@ def test_schedule_sets_approved_hours_and_explains_itself(tmp_path):
     formulas, values = Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
     row = formulas.row_for("Ann", MONDAY)
     assert round(_as_minutes(values.cell(row, formulas.columns["Net"]).value)) == 500  # what the punches say
-    assert round(_as_minutes(values.cell(row, formulas.columns[APPROVED]).value)) == 480  # what the schedule pays
+    assert round(_as_minutes(values.cell(row, formulas.columns[TOTAL]).value)) == 480  # what the schedule pays
     assert "8:00 AM to 4:30 PM" in formulas.sheet.cell(row, formulas.columns["Notes"]).value
     total = formulas.row_for("Ann", WEEK_TOTAL)
-    assert round(_as_minutes(values.cell(total, formulas.columns[APPROVED]).value)) == 480
+    assert round(_as_minutes(values.cell(total, formulas.columns[TOTAL]).value)) == 480
 
 
 def test_overtime_formula_uses_that_days_scheduled_hours(tmp_path):
@@ -445,10 +456,10 @@ def test_overtime_formula_uses_that_days_scheduled_hours(tmp_path):
     formulas, values = Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
     monday = formulas.row_for("Ann", MONDAY)
     friday = formulas.row_for("Ann", date(2026, 3, 6))
-    assert "-600" in formulas.sheet.cell(monday, formulas.columns["Overtime"]).value
-    assert round(_as_minutes(values.cell(monday, formulas.columns["Overtime"]).value)) == 15
-    assert "-0" in formulas.sheet.cell(friday, formulas.columns["Overtime"]).value
-    assert round(_as_minutes(values.cell(friday, formulas.columns["Overtime"]).value)) == 210  # a day off: all of it
+    assert "-600" in formulas.sheet.cell(monday, formulas.columns[OVERTIME]).value
+    assert round(_as_minutes(values.cell(monday, formulas.columns[OVERTIME]).value)) == 15
+    assert "-0" in formulas.sheet.cell(friday, formulas.columns[OVERTIME]).value
+    assert round(_as_minutes(values.cell(friday, formulas.columns[OVERTIME]).value)) == 210  # a day off: all of it
     assert "Day off" in formulas.sheet.cell(friday, formulas.columns["Notes"]).value
     thursday = formulas.row_for("Ann", date(2026, 3, 5))
     assert "No punches" in formulas.sheet.cell(thursday, formulas.columns["Notes"]).value
@@ -457,22 +468,25 @@ def test_overtime_formula_uses_that_days_scheduled_hours(tmp_path):
 def test_incomplete_days_hold_overtime_until_hours_are_typed(tmp_path):
     formulas, values = _overtime_file(tmp_path, [(0, "In", "08:00:00", "")])
     total = formulas.row_for("Ann", WEEK_TOTAL)
-    assert values.cell(total, formulas.columns["Overtime"]).value == "Needs hours"
+    assert values.cell(total, formulas.columns[OVERTIME]).value == "Needs hours"
 
 
 def test_pdf_shows_overtime_worked_out_from_punches(tmp_path):
     source = tmp_path / "export.xlsx"
     build_workbook([Person("Ann", "A-1", "Paint", [(0, "In", "08:00:00", ""), (0, "Out", "17:00:00", "")])]).save(source)
     text = pdf_text(process_export(source), "Bea Boss")
-    assert "Overtime 0:30" in text and "Jibble OT" not in text
+    assert "Regular hours" in text and "Overtime hours" in text and "Jibble OT" not in text
+    # Gross, lunch, net, regular, overtime and total, under the same columns as the days.
+    assert "Week total 9:00 0:30 8:30 8:00 0:30 8:30" in text
+    assert "Sat Mar 07 No punches" in text and "Sun Mar 08 No punches" in text
 
 
 def test_formulas_store_their_results_for_previews(processed):
     values = openpyxl.load_workbook(review_file(processed, "Bea Boss"), data_only=True)["Review"]
     formulas = Sheet(review_file(processed, "Bea Boss"))
     row = formulas.row_for("Ann Painter", MONDAY)
-    assert str(formulas.sheet.cell(row, formulas.columns[APPROVED]).value).startswith("=")
-    assert round(_as_minutes(values.cell(row, formulas.columns[APPROVED]).value)) == 480
+    assert str(formulas.sheet.cell(row, formulas.columns[TOTAL]).value).startswith("=")
+    assert round(_as_minutes(values.cell(row, formulas.columns[TOTAL]).value)) == 480
 
 
 def _as_minutes(value):
@@ -482,3 +496,65 @@ def _as_minutes(value):
 def test_review_file_name_uses_group_and_week(tmp_path):
     export = _export(tmp_path, crew())
     assert review_file_name(review_groups(export)[0], export) == "Example Co. - Bea Boss - Paint - 2026-03-02.xlsx"
+
+
+# --- Weekends and 15-minute blocks ---------------------------------------------
+
+
+def _weekend_file(tmp_path, people):
+    source = tmp_path / "export.xlsx"
+    build_workbook(people).save(source)
+    weekend = {"Sat": {"start": "07:30", "end": "12:30"}, "Sun": {"start": "07:30", "end": "12:30"}}
+    write_settings(settings.file_path(), {"Paint": "Bea Boss"}, {"Paint": {"start": "08:00", "end": "16:30"}}, weekend=weekend)
+    result = process_export(source)
+    path = review_file(result, "Bea Boss")
+    return result, Sheet(path), openpyxl.load_workbook(path, data_only=True)["Review"]
+
+
+def test_weekend_hours_are_all_overtime_in_the_review_file(tmp_path):
+    saturday = date(2026, 3, 7)
+    _, formulas, values = _weekend_file(tmp_path, [Person("Ann", "A-1", "Paint", [(5, "In", "07:28:00", ""), (5, "Out", "12:34:00", "")])])
+    row = formulas.row_for("Ann", saturday)
+    minutes = {label: round(_as_minutes(values.cell(row, formulas.columns[label]).value)) for label in (REGULAR, OVERTIME, TOTAL)}
+    assert minutes == {REGULAR: 0, OVERTIME: 300, TOTAL: 300}
+    assert round(_as_minutes(values.cell(row, formulas.columns["Lunch deduction"]).value)) == 0
+    assert "Saturday hours" in formulas.sheet.cell(row, formulas.columns["Notes"]).value
+
+
+def test_weekend_rows_show_even_without_punches(tmp_path):
+    _, formulas, _ = _weekend_file(tmp_path, [worked("Ann", "A-1", "Paint")])
+    for weekend_day in (date(2026, 3, 7), date(2026, 3, 8)):
+        row = formulas.row_for("Ann", weekend_day)
+        assert not formulas.sheet.cell(row, formulas.columns[ADJUSTMENT]).protection.locked
+        assert "add their time as an adjustment" in formulas.sheet.cell(row, formulas.columns["Notes"]).value
+
+
+def test_regular_overtime_and_total_columns_on_days_and_week(tmp_path):
+    punches = [(0, "In", "08:00:00", ""), (0, "Out", "16:52:00", ""), (1, "In", "08:06:00", ""), (1, "Out", "16:30:00", "")]
+    _, formulas, values = _weekend_file(tmp_path, [Person("Ann", "A-1", "Paint", punches)])
+    columns = list(formulas.columns)
+    assert columns[columns.index(ADJUSTMENT) + 1 : columns.index(ADJUSTMENT) + 4] == [REGULAR, OVERTIME, TOTAL]
+
+    def minutes(row):
+        return tuple(round(_as_minutes(values.cell(row, formulas.columns[label]).value)) for label in (REGULAR, OVERTIME, TOTAL))
+
+    assert minutes(formulas.row_for("Ann", MONDAY)) == (480, 15, 495)  # 22 minutes over: 15 of overtime
+    assert minutes(formulas.row_for("Ann", date(2026, 3, 3))) == (465, 0, 465)  # 7:54 rounds down
+    assert minutes(formulas.row_for("Ann", WEEK_TOTAL)) == (945, 15, 960)
+    regular = formulas.sheet.cell(formulas.row_for("Ann", MONDAY), formulas.columns[REGULAR]).value
+    assert regular.startswith("=IF(") and "-" in regular  # the total less overtime, so adjustments count
+
+
+def test_adjustments_and_typed_hours_go_in_15_minute_steps(tmp_path):
+    people = [worked("Bea", "B-1", "Paint - Supervisor"), Person("Ann", "A-1", "Paint", [(0, "In", "08:00:00", "")])]
+    _, formulas, _ = _weekend_file(tmp_path, people)
+    rules = {str(v.sqref): v for v in formulas.sheet.data_validations.dataValidation}
+    adjustment = rules[formulas.sheet.cell(formulas.row_for("Bea", MONDAY), formulas.columns[ADJUSTMENT]).coordinate]
+    assert "MOD(" in adjustment.formula1 and ",15)=0" in adjustment.formula1
+    typed = rules[formulas.sheet.cell(formulas.row_for("Ann", MONDAY), formulas.columns[TOTAL]).coordinate]
+    assert "MOD(ROUND(" in typed.formula1 and "15-minute steps" in typed.error
+
+
+def test_only_the_names_are_frozen_so_the_instructions_scroll_away(processed):
+    view = Sheet(review_file(processed, "Bea Boss")).sheet.sheet_view
+    assert view.pane.ySplit is None and view.pane.xSplit == 1

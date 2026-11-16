@@ -13,11 +13,13 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Iterable, Optional
 
-LUNCH_MINUTES = 30  # unpaid lunch per worked day, even if the employee also clocked out
+LUNCH_MINUTES = 30  # unpaid lunch per worked day, even if the employee also clocked out; none on weekend hours
 FULL_DAY_MINUTES = 480  # paid hours in a full day for anyone with no schedule
 GRACE_MINUTES = 5  # arriving this late still counts as arriving on time
 OVERTIME_STARTS_MINUTES = 15  # overtime counts once a day is this far over its paid hours, then from those hours
+BLOCK_MINUTES = 15  # paid hours go in blocks this long, always rounded down
 DOUBLE_PUNCH_SECONDS = 300  # punching again this soon is someone fixing a forgotten punch
+DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 SWAPPED_NOTE = "In and Out were swapped, probably after a forgotten punch. Hours use the times in order."
 DOUBLE_PUNCH_NOTE = "Two punches moments apart were counted as one, probably someone fixing a forgotten punch."
 
@@ -40,17 +42,28 @@ class Session:
 class Schedule:
     start: time
     end: time
-    days: frozenset[int]  # weekdays worked, where Monday is 0
+    days: frozenset[int] = frozenset()  # weekdays worked, where Monday is 0
+    lunch: int = LUNCH_MINUTES
+    # Hours on days off, by weekday: no lunch, and all of it is overtime.
+    weekend: tuple[tuple[int, "Schedule"], ...] = ()
 
     @property
     def full_minutes(self) -> int:
         """Paid hours in a scheduled day: the time at work, less lunch."""
         span = datetime.combine(datetime.min, self.end) - datetime.combine(datetime.min, self.start)
-        return int(span.total_seconds()) // 60 - LUNCH_MINUTES
+        return int(span.total_seconds()) // 60 - self.lunch
 
     @property
     def label(self) -> str:
         return f"{clock_time(self.start)} to {clock_time(self.end)}"
+
+    def weekend_for(self, weekday: int) -> Optional["Schedule"]:
+        """The hours for this weekday when it's a day off on this schedule, if any are set."""
+        return None if weekday in self.days else dict(self.weekend).get(weekday)
+
+    @property
+    def days_off_label(self) -> str:
+        return ", ".join(f"{DAY_NAMES[day]} {hours.label}" for day, hours in self.weekend if day not in self.days)
 
 
 @dataclass(frozen=True)
@@ -60,9 +73,10 @@ class DayHours:
     lunch: Optional[int]
     net: Optional[int]
     note: str = ""  # why these hours may not match the punch labels
-    paid: Optional[int] = None  # net hours after the schedule's rules
+    paid: Optional[int] = None  # net hours after the schedule's rules, in whole blocks: regular plus overtime
     full_minutes: int = FULL_DAY_MINUTES  # overtime is measured from here; zero on a day off
     pay_note: str = ""  # why paid may differ from net
+    lunch_capped: bool = False  # less was worked than the lunch, so only that much was deducted
 
     @property
     def gaps(self) -> list[tuple[datetime, datetime]]:
@@ -73,13 +87,17 @@ class DayHours:
         return None if self.paid is None else overtime_minutes(self.paid, self.full_minutes)
 
     @property
-    def lunch_capped(self) -> bool:
-        return bool(self.gross) and self.gross < LUNCH_MINUTES
+    def regular(self) -> Optional[int]:
+        return None if self.paid is None else self.paid - self.overtime
 
 
 def overtime_minutes(paid: int, full_minutes: int) -> int:
     over = paid - full_minutes
-    return over if over >= OVERTIME_STARTS_MINUTES else 0
+    return round_down_to_block(over) if over >= OVERTIME_STARTS_MINUTES else 0
+
+
+def round_down_to_block(minutes: int) -> int:
+    return minutes // BLOCK_MINUTES * BLOCK_MINUTES
 
 
 def clock_time(value: time | datetime) -> str:
@@ -160,32 +178,47 @@ def _paid_by_schedule(sessions: list[Session], schedule: Schedule) -> int:
         begin = start if on_time and index == 0 else max(session.start, start if on_time else first)
         seconds += max(0, int((session.end - begin).total_seconds()))
     worked = round_to_minutes(seconds)
-    paid = worked - min(LUNCH_MINUTES, worked)
+    paid = worked - min(schedule.lunch, worked)
     full = schedule.full_minutes
     # Checked before rounding, so that 14:59 past the end of the day stays unpaid.
-    past_the_end = seconds - (full + LUNCH_MINUTES) * 60
+    past_the_end = seconds - (full + schedule.lunch) * 60
     return full if 0 < past_the_end < OVERTIME_STARTS_MINUTES * 60 else paid
 
 
 def calculate_day(
-    punches: Iterable[Punch], has_source_row: bool = True, schedule: Optional[Schedule] = None, day_off: bool = False
+    punches: Iterable[Punch],
+    has_source_row: bool = True,
+    schedule: Optional[Schedule] = None,
+    day_off: bool = False,
+    weekend: Optional[Schedule] = None,
 ) -> DayHours:
+    """``weekend`` is the hours for this day when it's a day off, if the settings give any."""
     punches = list(punches)
     sessions, problems = pair_punches(punches)
+    weekend = weekend if day_off else None
     full = 0 if day_off else schedule.full_minutes if schedule else FULL_DAY_MINUTES
     if problems or not has_source_row:
         return DayHours(tuple(sessions), None, None, None, full_minutes=full)
     seconds = sum(int((s.end - s.start).total_seconds()) for s in sessions)
     gross = round_to_minutes(seconds)  # round the daily sum once, not each session
-    lunch = min(LUNCH_MINUTES, gross)  # net never goes below zero
+    lunch_rule = weekend.lunch if weekend else LUNCH_MINUTES
+    lunch = min(lunch_rule, gross)  # net never goes below zero
     net = gross - lunch
-    paid, pay_note = net, ""
-    if sessions and day_off:
+    exact, pay_note = net, ""
+    if sessions and weekend:
+        exact = _paid_by_schedule(sessions, weekend)
+        pay_note = (
+            f"Day off: paid by the {sessions[0].start:%A} hours, {weekend.label}, with no lunch. All hours are overtime."
+        )
+    elif sessions and day_off:
         pay_note = "Day off on this schedule, so all hours are overtime."
     elif sessions and schedule:
-        paid = _paid_by_schedule(sessions, schedule)
-        if paid != net:
+        exact = _paid_by_schedule(sessions, schedule)
+        if exact != net:
             pay_note = f"Paid by the schedule: {schedule.label}."
     elif sessions:
         pay_note = "No schedule for this department, so hours are paid as worked."
-    return DayHours(tuple(sessions), gross, lunch, net, _note(punches, sessions), paid, full, pay_note)
+    # The schedule's full day is in whole blocks, so this splits evenly into regular and overtime.
+    paid = round_down_to_block(exact)
+    capped = bool(gross) and gross < lunch_rule
+    return DayHours(tuple(sessions), gross, lunch, net, _note(punches, sessions), paid, full, pay_note, capped)

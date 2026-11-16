@@ -15,16 +15,16 @@ import json
 import os
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Optional
 
-from punch_clock.hours import Schedule
+from punch_clock.hours import BLOCK_MINUTES, DAY_NAMES, Schedule
 from punch_clock.jibble_export import UnsupportedExport
 
 FILE_NAME = "punch-clock-settings.json"
 READ_TIMEOUT_SECONDS = 5  # a dropped network drive can otherwise hold the app up for a minute
-WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+WEEKDAYS = DAY_NAMES
 
 
 @dataclass(frozen=True)
@@ -92,13 +92,41 @@ def file_path() -> Path:
     return Path(chosen) if chosen else Path.home() / FILE_NAME
 
 
-def _schedule(entry: dict) -> Schedule:
-    start = datetime.strptime(entry["start"], "%H:%M").time()
-    end = datetime.strptime(entry["end"], "%H:%M").time()
+def _time(text: str, where: str) -> time:
+    value = datetime.strptime(text, "%H:%M").time()
+    if value.minute % BLOCK_MINUTES:
+        raise LayoutMistake(
+            f"{where}: {text} isn't on the quarter hour. Hours are paid in 15-minute blocks, "
+            "so each start and end must be on :00, :15, :30 or :45."
+        )
+    return value
+
+
+def _times(entry: dict, where: str) -> tuple[time, time]:
+    start, end = _time(entry["start"], where), _time(entry["end"], where)
     if end <= start:
         raise ValueError(f"The schedule ending at {entry['end']} doesn't end after it starts.")
+    return start, end
+
+
+def _weekend(entry: dict, where: str) -> dict[int, Schedule]:
+    """Hours for days off, by day name. They have no lunch, and all of their hours are overtime."""
+    hours = {}
+    for day, times in entry.items():
+        if day not in WEEKDAYS:
+            raise LayoutMistake(f'{where}: "{day}" isn\'t a day. Use Mon, Tue, Wed, Thu, Fri, Sat or Sun.')
+        if not isinstance(times, dict) or set(times) != {"start", "end"}:
+            raise LayoutMistake(f"{where}: the hours for {day} need a start and an end, and nothing else.")
+        hours[WEEKDAYS.index(day)] = Schedule(*_times(times, f"{where}, {day}"), lunch=0)
+    return hours
+
+
+def _schedule(entry: dict, where: str, weekend: dict[int, Schedule]) -> Schedule:
+    """``weekend`` is the organization's hours for days off, which this schedule can change day by day."""
+    start, end = _times(entry, where)
     days = frozenset(WEEKDAYS.index(day) for day in entry.get("days", WEEKDAYS[:5]))
-    return Schedule(start, end, days)
+    own = _weekend(entry.get("weekend", {}), f"{where}, weekend")
+    return Schedule(start, end, days, weekend=tuple(sorted({**weekend, **own}.items(), key=lambda item: item[0])))
 
 
 def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
@@ -115,11 +143,15 @@ def _organization(name: str, entry: dict) -> Organization:
     supervisors = entry["supervisors"]
     if not all(isinstance(person, str) for person in supervisors.values()):
         raise LayoutMistake(f"{name}: each supervisor must be a name in quotes, or blank.")
+    weekend = _weekend(entry.get("weekend_schedule", {}), f"{name}, weekend_schedule")
     return Organization(
         name,
         supervisors,
-        {department.casefold(): _schedule(hours) for department, hours in entry["department_schedules"].items()},
-        {code.casefold(): _schedule(hours) for code, hours in entry["member_schedules"].items()},
+        {
+            department.casefold(): _schedule(hours, f"{name}, {department}", weekend)
+            for department, hours in entry["department_schedules"].items()
+        },
+        {code.casefold(): _schedule(hours, f"{name}, {code}", weekend) for code, hours in entry["member_schedules"].items()},
     )
 
 
