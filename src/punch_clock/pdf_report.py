@@ -16,7 +16,7 @@ from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
 
 from punch_clock import __version__
 from punch_clock.assignments import MISSING_SUPERVISOR_TITLE, ReviewGroup, missing_supervisor_codes
-from punch_clock.hours import format_minutes, gap_minutes, weekly_total
+from punch_clock.hours import MADE_UP_NOTE, format_minutes, gap_minutes, week_hours, weekly_total
 from punch_clock.jibble_export import Employee, UnsupportedExport, WeeklyExport
 
 WEEK_TOTAL = "Week total"
@@ -147,10 +147,12 @@ def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor
     # These can apply most days, so each gets one line for the week rather than one line a day.
     info += [f"{', '.join(days)}: {note}" for note, days in pay_notes.items()]
     # Under the same columns as the days, so each total sits below what it adds up.
-    names = ("gross", "lunch", "net", "regular", "overtime", "paid")
-    rows.append(
-        [_para(WEEK_TOTAL, bold=True), "", "", *[_para(format_minutes(weekly_total(getattr(h, n) for h in week)), bold=True) for n in names]]
-    )
+    # Overtime first makes up any regular hours the week is short of, so these two aren't simple sums.
+    totals = week_hours(week)
+    week_values = [*(weekly_total(getattr(h, n) for h in week) for n in ("gross", "lunch", "net")), totals.regular, totals.overtime, totals.paid]
+    rows.append([_para(WEEK_TOTAL, bold=True), "", "", *[_para(format_minutes(value), bold=True) for value in week_values]])
+    if totals.made_up:
+        info.append(f"Week: {MADE_UP_NOTE.format(made_up=format_minutes(totals.made_up), full=format_minutes(totals.full_minutes))}")
     # Wide enough for MISSING in every hours column, with nine columns across the page.
     table = _table(rows, [64, 48, 48, 56, 56, 56, 70, 70, 72], padding=3)
     table.setStyle(
@@ -321,6 +323,8 @@ def _headcount_page(pdf, export: WeeklyExport, group: Optional[ReviewGroup], chu
         "They're paid in 15-minute blocks, rounded down. Total approved hours = regular hours + overtime hours. "
         "Overtime starts 15 minutes past the employee's scheduled hours, counted from the end of those hours. "
         "All hours on a day off are overtime, and weekend hours set in the settings file have no lunch. "
+        "If the week's regular hours are short of the employee's scheduled week (at most 40:00), "
+        "overtime makes up the difference first in the week total. "
         "NR = no recorded timestamp; it does not establish absence. "
         "Full source comparisons are in the validation file.",
         y,

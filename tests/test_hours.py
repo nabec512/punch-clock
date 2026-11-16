@@ -11,6 +11,7 @@ from punch_clock.hours import (
     calculate_day,
     format_minutes,
     pair_punches,
+    week_hours,
     weekly_total,
 )
 
@@ -322,3 +323,62 @@ def test_weekend_hours_only_apply_on_a_day_off():
 def test_a_day_off_without_weekend_hours_works_as_before():
     hours = calculate_day(day((7, 0, 0), (11, 0, 0)), schedule=DAY_SHIFT, day_off=True)
     assert (hours.lunch, hours.paid, hours.overtime) == (30, 210, 210)
+
+
+# --- Week totals ----------------------------------------------------------------
+
+
+def scheduled_week(*days_out, schedule=DAY_SHIFT):
+    """A Monday-to-Sunday week starting 8:00 AM, with each day's clock-out as (hour, minute), or None for no punches."""
+    week = []
+    for index, out in enumerate(days_out + (None,) * (7 - len(days_out))):
+        date = (2026, 3, 2 + index)
+        punches = day((8, 0, 0), (*out, 0), date=date) if out else []
+        week.append(calculate_day(punches, schedule=schedule, day_off=index not in schedule.days))
+    return week
+
+
+def test_overtime_makes_up_a_short_day_to_a_full_week():
+    # Three 11-hour days, a 5-hour Thursday and a 9-hour Friday: 37:00 regular and 10:00 overtime.
+    days = scheduled_week((19, 30), (19, 30), (19, 30), (13, 30), (17, 30))
+    assert (sum(d.regular for d in days), sum(d.overtime for d in days)) == (2220, 600)
+    week = week_hours(days)
+    assert (week.regular, week.overtime, week.paid, week.made_up) == (2400, 420, 2820, 180)
+
+
+def test_a_full_week_keeps_all_its_overtime():
+    week = week_hours(scheduled_week((17, 0), (16, 30), (16, 30), (16, 30), (16, 30)))
+    assert (week.regular, week.overtime, week.made_up) == (2400, 30, 0)
+
+
+def test_overtime_short_of_the_gap_all_becomes_regular():
+    week = week_hours(scheduled_week((17, 30), (16, 30), (12, 30)))
+    assert (week.regular, week.overtime, week.paid, week.made_up) == (1260, 0, 1260, 60)
+
+
+def test_weekend_overtime_also_makes_up_the_week():
+    days = scheduled_week((16, 30), (16, 30), (16, 30), (16, 30), (12, 30))
+    days[5] = weekend_day((7, 30, 0), (12, 30, 0))  # 5:00, all overtime on the day
+    week = week_hours(days)
+    assert (week.regular, week.overtime, week.made_up) == (2400, 60, 240)
+
+
+def test_the_week_is_the_employees_own_schedule():
+    four_tens = week_hours(scheduled_week((17, 30), (17, 30), (17, 30), (13, 0), schedule=LONG_SHIFT))
+    assert (four_tens.full_minutes, four_tens.regular, four_tens.overtime) == (2400, 1890, 0)  # starting at 8:00, an hour late
+    part_time = Schedule(time(8, 0), time(12, 0), frozenset(range(5)), lunch=0)
+    assert week_hours(scheduled_week(schedule=part_time)).full_minutes == 1200
+
+
+def test_with_no_schedule_the_week_is_40_hours_not_every_day():
+    # Every day counts 8:00 as full, so Saturday's 4:00 is regular and the week is already past 40:00.
+    outs = [(17, 0, 0)] * 5 + [(12, 30, 0)]
+    week = week_hours(calculate_day(day((8, 0, 0), out, date=(2026, 3, 2 + i))) for i, out in enumerate(outs))
+    assert (week.full_minutes, week.regular, week.overtime, week.made_up) == (2400, 2640, 150, 0)
+
+
+def test_an_incomplete_week_has_no_totals():
+    days = scheduled_week((19, 30))
+    days[1] = calculate_day(day((8, 0, 0), date=(2026, 3, 3)), schedule=DAY_SHIFT)
+    week = week_hours(days)
+    assert (week.regular, week.overtime, week.paid, week.made_up) == (None, None, None, None)

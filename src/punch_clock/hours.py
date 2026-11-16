@@ -18,10 +18,12 @@ FULL_DAY_MINUTES = 480  # paid hours in a full day for anyone with no schedule
 GRACE_MINUTES = 5  # arriving this late still counts as arriving on time
 OVERTIME_STARTS_MINUTES = 15  # overtime counts once a day is this far over its paid hours, then from those hours
 BLOCK_MINUTES = 15  # paid hours go in blocks this long, always rounded down
+WEEK_MINUTES = 2400  # most regular hours in a week; overtime first makes up any shortfall up to here
 DOUBLE_PUNCH_SECONDS = 300  # punching again this soon is someone fixing a forgotten punch
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 SWAPPED_NOTE = "In and Out were swapped, probably after a forgotten punch. Hours use the times in order."
-DOUBLE_PUNCH_NOTE = "Two punches moments apart were counted as one, probably someone fixing a forgotten punch."
+MADE_UP_NOTE = "{made_up} of overtime counted as regular hours, to bring the week up to its scheduled {full}."
+DOUBLE_PUNCH_NOTE ="Two punches moments apart were counted as one, probably someone fixing a forgotten punch."
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,38 @@ class DayHours:
     @property
     def regular(self) -> Optional[int]:
         return None if self.paid is None else self.paid - self.overtime
+
+
+@dataclass(frozen=True)
+class WeekHours:
+    """A week's totals, where overtime first makes up any regular hours short of the scheduled week."""
+
+    regular: Optional[int]
+    overtime: Optional[int]
+    paid: Optional[int]
+    made_up: Optional[int]  # overtime counted as regular hours instead
+    full_minutes: int  # the scheduled week's regular hours
+
+
+def week_full_minutes(days: Iterable[DayHours]) -> int:
+    """The employee's own scheduled week, but never over 40 hours, as with no schedule every day counts as full."""
+    return min(WEEK_MINUTES, sum(day.full_minutes for day in days))
+
+
+def week_hours(days: Iterable[DayHours]) -> WeekHours:
+    days = list(days)
+    full = week_full_minutes(days)
+    regular = weekly_total(day.regular for day in days)
+    overtime = weekly_total(day.overtime for day in days)
+    if regular is None or overtime is None:
+        return WeekHours(None, None, None, None, full)
+    made_up = made_up_minutes(regular, overtime, full)
+    return WeekHours(regular + made_up, overtime - made_up, regular + overtime, made_up, full)
+
+
+def made_up_minutes(regular: int, overtime: int, full_minutes: int) -> int:
+    """Overtime moved to regular hours, so a short day elsewhere in the week doesn't leave the week short."""
+    return min(overtime, max(0, full_minutes - regular))
 
 
 def overtime_minutes(paid: int, full_minutes: int) -> int:

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- Overtime now makes up a short week. When an employee's regular hours for the week come to less than their scheduled week, which is never more than 40:00, overtime fills the gap first. For example, someone who leaves early on Thursday after staying late on other days, with 37:00 regular and 10:00 overtime, now has 40:00 regular and 7:00 overtime for the week. Total approved hours don't change.
+- This applies to the week total in the review spreadsheet, where it updates with adjustments and typed hours, and in the PDF. Each day still shows its own overtime, and a note on the week total says how much overtime was counted as regular hours.
+
 ## 0.8.0
 
 Weekend hours, 15-minute blocks and clearer hour columns, after the first week of supervisor reviews.

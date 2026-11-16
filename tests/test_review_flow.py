@@ -427,7 +427,9 @@ def test_overtime_comes_from_approved_hours_not_jibble(tmp_path):
     assert "1440" in cell.value and "480" in cell.value and cell.protection.locked
     assert round(_as_minutes(values.cell(row, formulas.columns[OVERTIME]).value)) == 30
     total = formulas.row_for("Ann", WEEK_TOTAL)
-    assert round(_as_minutes(values.cell(total, formulas.columns[OVERTIME]).value)) == 30
+    # One day is far short of a full week, so the week counts that overtime as regular hours.
+    assert round(_as_minutes(values.cell(total, formulas.columns[OVERTIME]).value)) == 0
+    assert round(_as_minutes(values.cell(total, formulas.columns[REGULAR]).value)) == 510
     assert "Jibble overtime" not in formulas.columns
 
 
@@ -477,7 +479,9 @@ def test_pdf_shows_overtime_worked_out_from_punches(tmp_path):
     text = pdf_text(process_export(source), "Bea Boss")
     assert "Regular hours" in text and "Overtime hours" in text and "Jibble OT" not in text
     # Gross, lunch, net, regular, overtime and total, under the same columns as the days.
-    assert "Week total 9:00 0:30 8:30 8:00 0:30 8:30" in text
+    # The week is short of 40:00, so its overtime counts as regular hours.
+    assert "Week total 9:00 0:30 8:30 8:30 0:00 8:30" in text
+    assert "Week: 0:30 of overtime counted as regular hours, to bring the week up to its scheduled 40:00." in text
     assert "Sat Mar 07 No punches" in text and "Sun Mar 08 No punches" in text
 
 
@@ -540,9 +544,41 @@ def test_regular_overtime_and_total_columns_on_days_and_week(tmp_path):
 
     assert minutes(formulas.row_for("Ann", MONDAY)) == (480, 15, 495)  # 22 minutes over: 15 of overtime
     assert minutes(formulas.row_for("Ann", date(2026, 3, 3))) == (465, 0, 465)  # 7:54 rounds down
-    assert minutes(formulas.row_for("Ann", WEEK_TOTAL)) == (945, 15, 960)
+    assert minutes(formulas.row_for("Ann", WEEK_TOTAL)) == (960, 0, 960)  # a short week: overtime makes it up
     regular = formulas.sheet.cell(formulas.row_for("Ann", MONDAY), formulas.columns[REGULAR]).value
     assert regular.startswith("=IF(") and "-" in regular  # the total less overtime, so adjustments count
+
+
+def _short_thursday():
+    """37:00 regular and 10:00 overtime over the days, on an 8:00 AM to 4:30 PM schedule."""
+    outs = ["19:30:00", "19:30:00", "19:30:00", "13:30:00", "17:30:00"]
+    return [Person("Ann", "A-1", "Paint", [p for day, out in enumerate(outs) for p in ((day, "In", "08:00:00", ""), (day, "Out", out, ""))])]
+
+
+def test_overtime_makes_up_a_short_week_in_the_review_file(tmp_path):
+    _, formulas, values = _weekend_file(tmp_path, _short_thursday())
+    total = formulas.row_for("Ann", WEEK_TOTAL)
+    minutes = {label: round(_as_minutes(values.cell(total, formulas.columns[label]).value)) for label in (REGULAR, OVERTIME, TOTAL)}
+    assert minutes == {REGULAR: 2400, OVERTIME: 420, TOTAL: 2820}
+    for label in (REGULAR, OVERTIME):  # live, so adjustments still count
+        assert "MIN(" in formulas.sheet.cell(total, formulas.columns[label]).value
+    assert values.cell(total, formulas.columns["Notes"]).value == (
+        "3:00 of overtime counted as regular hours, to bring the week up to its scheduled 40:00."
+    )
+    thursday = formulas.row_for("Ann", date(2026, 3, 5))
+    assert round(_as_minutes(values.cell(thursday, formulas.columns[REGULAR]).value)) == 300  # each day stays as worked
+
+
+def test_overtime_makes_up_a_short_week_in_the_pdf(tmp_path):
+    result, _, _ = _weekend_file(tmp_path, _short_thursday())
+    text = pdf_text(result, "Bea Boss")
+    assert "Week total 49:30 2:30 47:00 40:00 7:00 47:00" in text
+    assert "Week: 3:00 of overtime counted as regular hours" in text
+
+
+def test_a_full_week_has_no_made_up_note(tmp_path):
+    _, formulas, values = _weekend_file(tmp_path, [worked("Ann", "A-1", "Paint", range(5))])
+    assert values.cell(formulas.row_for("Ann", WEEK_TOTAL), formulas.columns["Notes"]).value in ("", None)
 
 
 def test_adjustments_and_typed_hours_go_in_15_minute_steps(tmp_path):

@@ -101,6 +101,7 @@ Each supervisor's files hold only their own departments.
 | Total approved hours | Paid, plus the supervisor's adjustment. On an incomplete day, the hours the supervisor typed. Always in 15-minute blocks. |
 | Overtime hours | Starts 15 minutes past the employee's scheduled hours, counted from the end of those hours, in 15-minute blocks. On an 8-hour schedule, 8h 22m paid gives 8:00 regular and 0:15 overtime, and 8h 14m gives 8:00 regular and no overtime. All hours on a scheduled day off are overtime. Jibble's overtime isn't used. |
 | Regular hours | Total approved hours less overtime hours. |
+| Week total | Overtime first makes up any regular hours the week is short of, up to the employee's scheduled week, which is never more than 40:00. With 37:00 regular and 10:00 overtime on a 40-hour schedule, the week shows 40:00 regular and 7:00 overtime. Total approved hours don't change, and each day still shows its own overtime. |
 | Punch pairs | Each day's punches are paired in time order, ignoring Jibble's In and Out labels. |
 | Incomplete punches | A day with an odd number of punches is missing one. That day's and that week's gross and net show `MISSING` until reviewed. |
 | No punches | Shown as `-`, not `0:00`. It doesn't confirm an absence. |
@@ -127,7 +128,7 @@ In the busy season, some employees come in on days off for a short shift with no
 
 A day off with no hours set works as before: lunch is deducted, hours are paid as worked, and all of it is overtime.
 
-To change the lunch length, grace period, overtime rule or block length, edit the numbers at the top of [`hours.py`](src/punch_clock/hours.py) and the wording in [`pdf_report.py`](src/punch_clock/pdf_report.py), [`review_workbook.py`](src/punch_clock/review_workbook.py) and [`validation_report.py`](src/punch_clock/validation_report.py).
+To change the lunch length, grace period, overtime rule, block length or 40-hour week, edit the numbers at the top of [`hours.py`](src/punch_clock/hours.py) and the wording in [`pdf_report.py`](src/punch_clock/pdf_report.py), [`review_workbook.py`](src/punch_clock/review_workbook.py) and [`validation_report.py`](src/punch_clock/validation_report.py).
 
 ## The settings file
 

@@ -14,7 +14,9 @@ from xlsxwriter.utility import xl_rowcol_to_cell
 
 from punch_clock.assignments import ReviewGroup
 from punch_clock import __version__
-from punch_clock.hours import BLOCK_MINUTES, OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes
+from punch_clock.hours import (
+    BLOCK_MINUTES, MADE_UP_NOTE, OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes, week_hours,
+)
 from punch_clock.jibble_export import DayRecord, Employee, WeeklyExport
 
 REVIEW_SHEET = "Review"
@@ -46,6 +48,8 @@ INSTRUCTIONS = [
     "Hours follow the schedule: arriving early isn't paid, and arriving up to 5 minutes late counts as on time.",
     "Overtime is worked out for you, and starts 15 minutes past the employee's scheduled hours. "
     "All hours on a day off, such as the weekend, are overtime. An adjustment or typed hours change it too.",
+    "If the week's regular hours come to less than the employee's scheduled week (at most 40:00), overtime makes up "
+    "the difference first, so the Week total row can show more regular and less overtime than the days added up.",
     "When you've finished an employee, go to Reviewed in their Week total row, click the cell that says No, "
     "and choose Yes from the arrow.",
     "When everyone is done, save this file and return it to accounting.",
@@ -285,12 +289,21 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
         row, COLUMN[ADJUSTMENT], f'=IF(COUNT({adjustments})=0,"",SUM({adjustments}))', formats["total_number"], ""
     )
     blanks = "+".join(f"COUNTBLANK({cell})" for cell in needs_hours)
-    for label, attribute in ((REGULAR, "regular"), (OVERTIME, "overtime"), (TOTAL, "paid")):
-        total_sum = f"SUM({column_range(label)})"
+    week = week_hours(days)
+    # Overtime first makes up any regular hours the week is short of. In whole minutes, as times are fractions of a day.
+    regular = f"ROUND(SUM({column_range(REGULAR)})*1440,0)"
+    overtime = f"ROUND(SUM({column_range(OVERTIME)})*1440,0)"
+    made_up = f"MIN({overtime},MAX(0,{week.full_minutes}-{regular}))"
+    totals = (
+        (REGULAR, f"({regular}+{made_up})/1440", week.regular),
+        (OVERTIME, f"({overtime}-{made_up})/1440", week.overtime),
+        (TOTAL, f"SUM({column_range(TOTAL)})", week.paid),
+    )
+    for label, expression, minutes in totals:
         if needs_hours:
-            formula, cached = f'=IF({blanks}>0,"Needs hours",{total_sum})', "Needs hours"
+            formula, cached = f'=IF({blanks}>0,"Needs hours",{expression})', "Needs hours"
         else:
-            formula, cached = f"={total_sum}", sum(getattr(h, attribute) for h in days) / 1440
+            formula, cached = f"={expression}", minutes / 1440
         sheet.write_formula(row, COLUMN[label], formula, formats["total_duration"], cached)
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
     sheet.write(row, COLUMN[REVIEWED], "No", formats["edit_choice"])
@@ -305,7 +318,15 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
             "error_message": "Choose Yes or No.",
         },
     )
-    sheet.write(row, COLUMN[NOTES], "" if complete else "Some punches are incomplete, so these totals can't be worked out.", formats["total_wrap"])
+    # h:mm built by hand, as TEXT's duration codes differ between languages of Excel.
+    shown = f'INT({made_up}/60)&":"&TEXT(MOD({made_up},60),"00")'
+    note = f'IF({made_up}>0,{shown}&"{MADE_UP_NOTE.format(made_up="", full=format_minutes(week.full_minutes))}","")'
+    if needs_hours:
+        incomplete = "Some punches are incomplete. Enter their hours to work out these totals."
+        sheet.write_formula(row, COLUMN[NOTES], f'=IF({blanks}>0,"{incomplete}",{note})', formats["total_wrap"], incomplete)
+    else:
+        cached = MADE_UP_NOTE.format(made_up=format_minutes(week.made_up), full=format_minutes(week.full_minutes))
+        sheet.write_formula(row, COLUMN[NOTES], f"={note}", formats["total_wrap"], cached if week.made_up else "")
 
 
 def _write_punch_sheet(workbook, formats, export: WeeklyExport, group: ReviewGroup) -> None:

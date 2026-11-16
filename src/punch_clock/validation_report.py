@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from punch_clock import __version__
 from punch_clock.assignments import departments_without_supervisor, review_groups
-from punch_clock.hours import format_minutes, weekly_total
+from punch_clock.hours import format_minutes, week_hours, weekly_total
 from punch_clock.jibble_export import ENTRIES, TIMESHEETS, Employee, WeeklyExport
 
 
@@ -65,6 +65,8 @@ def build_validation_text(export: WeeklyExport) -> str:
         "Overtime starts 15 minutes past the scheduled hours, counted from the end of those hours, in 15-minute blocks. "
         "All hours on a scheduled day off are overtime. With no schedule, it starts at 8:15. It isn't taken from Jibble. "
         "Regular = paid minus overtime.",
+        "Week totals: if the week's regular hours are short of the scheduled week (the sum of each day's scheduled "
+        "hours, at most 40:00), overtime makes up the difference first. Total approved hours don't change.",
         "Zero is preserved. Blank duration propagates as MISSING, never zero. NR means no timestamp.",
         "Times are displayed in the source timezone with seconds; no schedule times are substituted.",
         "Team Summary dash is interpreted as zero only for reconciliation.",
@@ -87,6 +89,12 @@ def build_validation_text(export: WeeklyExport) -> str:
                     f"lunch {format_minutes(hours.lunch)}, net {format_minutes(hours.net)}, "
                     f"regular {format_minutes(hours.regular)}, overtime {format_minutes(hours.overtime)}"
                 )
+        week = week_hours(employee.days[day].hours for day in export.dates)
+        if week.made_up:
+            lines.append(
+                f"{employee.code} week: regular {format_minutes(week.regular)}, overtime {format_minutes(week.overtime)}, "
+                f"including {format_minutes(week.made_up)} of overtime counted as regular up to {format_minutes(week.full_minutes)}"
+            )
     lines += ["", "REVIEW FILES"]
     for group in review_groups(export):
         lines.append(f"{group.title}: {len(group.employees)} employees")
