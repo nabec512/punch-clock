@@ -59,7 +59,7 @@ Jibble's filter picks people by their position now, but each punch keeps the pos
 
 ## Weekly use
 
-**Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. The week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
+**Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. A moving bar shows while the reports are being made, and the week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
 
 **Step 2: supervisors review.** In their Excel file, each supervisor:
 
@@ -167,6 +167,7 @@ The file has a section for each organization, because organizations can have dep
 
 | Key | Meaning |
 |---|---|
+| `minimum_version` | Optional, beside `organizations` at the top: `"minimum_version": "0.9.0"`. The oldest version of the app allowed to use this file. See [Keeping every PC on the same rules](#keeping-every-pc-on-the-same-rules) |
 | `organizations` | One section per organization, named as Jibble writes it at the top of the export. Capitals and extra spaces don't matter. Each section needs all three keys below, even if they're empty: `{}` |
 | `supervisors` | Who reviews each department. Leave a name blank, or the department out, and accounting reviews those employees |
 | `department_schedules` | Hours for each department, matched to the Jibble position without any `- Supervisor` ending |
@@ -187,6 +188,33 @@ The app reads the file once each time someone makes reports, and doesn't touch t
 | The file can't be reached within 5 seconds | Uses the saved copy, and says so on the screen and in the PDFs, Excel files and Validation file |
 | It can't be reached, and this PC has no saved copy | Stops with a plain message |
 | The file has a mistake in it | Stops with a plain message, and keeps the saved copy as it was |
+| The file needs a newer version of the app | Stops, and says to update |
+
+### Mistakes in the file
+
+The file is edited by hand, so the app checks all of it each time and refuses it rather than guess. The message says where the mistake is and how to fix it:
+
+- A missing or extra comma, quote mark or bracket, with the line it's on.
+- A setting the app doesn't know, such as `day` for `days`. It's never ignored, because a misspelled setting would quietly change someone's pay.
+- A missing section, a time or day that can't be read, an end that isn't after its start, or a schedule that leaves no paid hours after lunch.
+- The same organization, department or member code twice.
+
+Capitals don't matter in department names and member codes, and neither does a space before or after them.
+
+To check the file after editing it, choose **Settings file...** and pick it again.
+
+### Keeping every PC on the same rules
+
+Every PC reads the same file, but each one updates when its user agrees to. An older copy of the app doesn't know about settings added since. So when you start using a newer setting, or want every PC on a newer version's rules, put that version at the top of the file:
+
+```json
+{
+  "minimum_version": "0.9.0",
+  "organizations": { }
+}
+```
+
+A PC with an older version then stops and asks to be updated, instead of making reports that differ from everyone else's. This works from version 0.9.0. Earlier versions ignore it.
 
 For keeping your own copy in a clone of this repository, the `private/` folder is ignored by Git.
 

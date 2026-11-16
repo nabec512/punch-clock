@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from punch_clock import __version__
+from punch_clock import __version__, version_numbers
 
 REPO = "nabec512/punch-clock"
 LATEST_RELEASE = f"https://api.github.com/repos/{REPO}/releases/latest"
@@ -49,16 +48,11 @@ def _fetch(url: str, seconds: int) -> bytes:
         raise OSError(str(error)) from error
 
 
-def _version_numbers(text: str) -> Optional[tuple[int, int, int]]:
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", text)
-    return (int(match[1]), int(match[2]), int(match[3])) if match else None
-
-
 def find_update(current: str = __version__) -> Optional[Update]:
     """The latest release if it's newer than ``current``. Raises OSError or ValueError if GitHub can't be read."""
     release = json.loads(_fetch(LATEST_RELEASE, CHECK_SECONDS))
-    latest = _version_numbers(str(release.get("tag_name", "")))
-    running = _version_numbers(current)
+    latest = version_numbers(str(release.get("tag_name", "")))
+    running = version_numbers(current)
     if not latest or not running or latest <= running:
         return None
     version = ".".join(str(number) for number in latest)

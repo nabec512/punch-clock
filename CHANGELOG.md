@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0
+
+Catches mistakes in the settings file instead of ignoring them, and shows that the reports are being made.
+- **A setting the app doesn't know is now refused.** Before, a misspelled one was ignored without a word: `day` instead of `days` paid a Monday to Thursday crew as Monday to Friday. The message names the setting and lists the ones that can go there. Check the settings file after installing this version, as a file with such a mistake was accepted until now.
+- Mistakes in the settings file are explained in plain words: which line a missing comma or bracket is on, which section is missing, or which time or day can't be read.
+- A schedule that leaves no paid hours after lunch, or that lists no days, is refused.
+- A space typed before or after a department or member code no longer stops it matching.
+- The settings file can name the oldest version of the app allowed to use it, with `"minimum_version": "0.9.0"`. An older copy then asks to be updated instead of making reports without settings it doesn't know. Versions before this one ignore it.
+- The window shows a moving bar and a message while the reports are being made, instead of freezing.
+- An unexpected error while downloading an update no longer leaves the window stuck on "Downloading the update".
+
 ## 0.8.1
 
 - Overtime now makes up a short week. When an employee's regular hours for the week come to less than their scheduled week, which is never more than 40:00, overtime fills the gap first. For example, someone who leaves early on Thursday after staying late on other days, with 37:00 regular and 10:00 overtime, now has 40:00 regular and 7:00 overtime for the week. Total approved hours don't change.

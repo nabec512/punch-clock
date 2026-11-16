@@ -9,7 +9,7 @@ from urllib.error import URLError
 
 import pytest
 
-from punch_clock import app, updater
+from punch_clock import __version__, app, updater, version_numbers
 
 BASE = f"https://github.com/{updater.REPO}/releases/download/v9.9.9/"
 INSTALLER = b"pretend installer"
@@ -39,6 +39,11 @@ def serve_release(monkeypatch, body=None):
 
 
 UPDATE = updater.Update("9.9.9", "PunchClock-9.9.9-setup.exe", BASE + "PunchClock-9.9.9-setup.exe", BASE + "SHA256SUMS.txt")
+
+
+def test_this_version_is_written_so_that_updates_can_compare_it():
+    """Anything but three numbers, such as 1.0 or 1.0.0-rc1, and an installed copy would never update again."""
+    assert version_numbers(__version__)
 
 
 @pytest.mark.parametrize(
@@ -122,7 +127,7 @@ class Window:
     """Stands in for the app's window, so a test can watch it close."""
 
     def __init__(self, root, monkeypatch):
-        monkeypatch.setattr(app, "UPDATE_POLL_MS", 5)
+        monkeypatch.setattr(app, "POLL_MS", 5)
         self.root = root
         self.top = tk.Toplevel(root)
         self.status = tk.StringVar(self.top, value="start")
@@ -213,9 +218,10 @@ def test_buttons_are_off_during_the_download(window, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("step", ["download", "install"])
-def test_a_failed_update_leaves_the_app_usable(window, monkeypatch, tmp_path, step):
+@pytest.mark.parametrize("error", [OSError("nope"), RuntimeError("not one the updater expects")])
+def test_a_failed_update_leaves_the_app_usable(window, monkeypatch, tmp_path, step, error):
     def fails(*_):
-        raise OSError("nope")
+        raise error
 
     monkeypatch.setattr(updater, "find_update", lambda: UPDATE)
     monkeypatch.setattr(updater, "download", fails if step == "download" else lambda update: tmp_path / "setup.exe")

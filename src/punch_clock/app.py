@@ -16,7 +16,7 @@ from punch_clock.jibble_export import UnsupportedExport, WeeklyExport
 from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
-UPDATE_POLL_MS = 500
+POLL_MS = 100  # how often the window looks for background work to have finished
 
 
 def _employees(count: int) -> str:
@@ -88,30 +88,36 @@ def process_summary(result: ProcessResult) -> str:
     return "\n".join(lines)
 
 
-def _show_errors(parent, action: Callable):
-    """Run an action, turning failures into messages. Returns None if it failed."""
+def _show_error(parent, error: Exception) -> None:
+    """Say what went wrong in a message, as the windowed app has no console to show a traceback."""
     from tkinter import messagebox
 
-    try:
-        return action()
-    except UnsupportedExport as error:
+    if isinstance(error, UnsupportedExport):
         messagebox.showerror("This can't be used", str(error), parent=parent)
-    except PermissionError as error:
+    elif isinstance(error, PermissionError):
         messagebox.showerror(
             "File is in use",
             f"Close this file if it is open, then try again:\n\n{error.filename2 or error.filename}",
             parent=parent,
         )
-    except Exception as error:  # the windowed app has no console to show a traceback
+    else:
         messagebox.showerror(
             "Something went wrong",
             f"Nothing was finished. Show this message to your IT contact:\n\n{type(error).__name__}: {error}",
             parent=parent,
         )
+
+
+def _show_errors(parent, action: Callable):
+    """Run an action, turning failures into messages. Returns None if it failed."""
+    try:
+        return action()
+    except Exception as error:
+        _show_error(parent, error)
     return None
 
 
-def choose_and_process(parent) -> Optional[ProcessResult]:
+def choose_export(parent) -> Optional[Path]:
     from tkinter import filedialog
 
     source = filedialog.askopenfilename(
@@ -119,7 +125,24 @@ def choose_and_process(parent) -> Optional[ProcessResult]:
         title="Choose this week's file from Jibble",
         filetypes=[("Excel file", "*.xlsx")],
     )
-    return _show_errors(parent, lambda: process_export(source)) if source else None
+    return Path(source) if source else None
+
+
+def process_in_window(root, source: Path, working: Callable[[bool], None], finished: Callable) -> None:
+    """Make the reports away from the window, so it can show that it's working instead of freezing.
+
+    ``working`` is told when the work starts and stops. ``finished`` then gets the result, or
+    None if the reports couldn't be made, after the reason has been shown.
+    """
+
+    def done(result: Optional[ProcessResult], error: Optional[Exception]) -> None:
+        working(False)
+        if error:
+            _show_error(root, error)
+        finished(result)
+
+    working(True)
+    _in_background(root, lambda: process_export(source), done)
 
 
 def choose_settings_file(parent) -> Optional[Path]:
@@ -139,20 +162,24 @@ def choose_settings_file(parent) -> Optional[Path]:
 
 
 def _in_background(root, work: Callable, finished: Callable) -> None:
-    """Run slow network work without freezing the window. Tk may only be used from its own thread."""
+    """Run slow work without freezing the window. Tk may only be used from its own thread.
+
+    ``finished`` gets the result and no error, or no result and the error. Every error is passed
+    on, because one that went missing here would leave the window waiting for ever.
+    """
     outcome: list = []
 
     def run() -> None:
         try:
             outcome.append((work(), None))
-        except (OSError, ValueError) as error:
+        except Exception as error:
             outcome.append((None, error))
 
     def wait() -> None:
         if outcome:
             finished(*outcome[0])
         elif root.winfo_exists():
-            root.after(UPDATE_POLL_MS, wait)
+            root.after(POLL_MS, wait)
 
     threading.Thread(target=run, daemon=True).start()
     wait()
@@ -170,7 +197,7 @@ def _offer_update(root, status, buttons: Sequence, is_busy: Callable[[], bool]) 
         if not root.winfo_exists():
             return
         if is_busy():  # don't close the app under someone choosing a file
-            root.after(UPDATE_POLL_MS, offer, update)
+            root.after(POLL_MS, offer, update)
         elif messagebox.askyesno(
             "Update available",
             f"A new version of {APP_NAME} is ready (you have {__version__}, the new one is {update.version}).\n\n"
@@ -190,7 +217,7 @@ def _offer_update(root, status, buttons: Sequence, is_busy: Callable[[], bool]) 
                 if error:
                     raise error
                 updater.install(installer)
-            except (OSError, ValueError):
+            except Exception:
                 status.set(before)
                 for button in buttons:
                     button.state(["!disabled"])
@@ -217,11 +244,12 @@ def run_window() -> int:
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(2, weight=1)
+    frame.rowconfigure(3, weight=1)
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
     settings_location = tk.StringVar(value=f"Settings file: {settings.file_path()}")
     last_folder: dict[str, Path] = {}
     busy = False
+    making_reports = False
 
     def while_busy(action: Callable) -> Callable:
         def run() -> None:
@@ -234,13 +262,44 @@ def run_window() -> int:
 
         return run
 
+    def show_working(working: bool) -> None:
+        nonlocal making_reports
+        making_reports = working
+        for button in (process_button, settings_button):
+            button.state(["disabled" if working else "!disabled"])
+        if working:
+            progress.grid()
+            progress.start(12)
+        else:
+            progress.stop()
+            progress.grid_remove()
+
     def on_process() -> None:
-        result = choose_and_process(root)
-        if result:
+        nonlocal busy
+        busy = True  # until the reports are made, so an update isn't offered part-way through
+        source = choose_export(root)
+        if not source:
+            busy = False
+            return
+        before = status.get()
+        status.set(f"Making the reports from {source.name}. This usually takes a few seconds...")
+
+        def finished(result: Optional[ProcessResult]) -> None:
+            nonlocal busy
+            busy = False
+            if not result:
+                status.set(before)
+                return
             status.set(process_summary(result))
             last_folder["path"] = result.folder
             open_button.state(["!disabled"])
             os.startfile(result.folder)
+
+        process_in_window(root, source, show_working, finished)
+
+    def on_close() -> None:
+        if not making_reports:  # closing part-way would leave a half-made folder behind
+            root.destroy()
 
     def on_settings_file() -> None:
         chosen = choose_settings_file(root)
@@ -248,12 +307,15 @@ def run_window() -> int:
             settings_location.set(f"Settings file: {chosen}")
 
     ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
-    process_button = ttk.Button(frame, text="Make this week's reports...", command=while_busy(on_process))
+    process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
     process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
-    ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=2, column=0, sticky="nsew")
-    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=3, column=0, sticky="w", pady=(12, 0))
+    progress = ttk.Progressbar(frame, mode="indeterminate")  # moves while the reports are being made
+    progress.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+    progress.grid_remove()
+    ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=3, column=0, sticky="nsew")
+    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=4, column=0, sticky="w", pady=(12, 0))
     bottom = ttk.Frame(frame)
-    bottom.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+    bottom.grid(row=5, column=0, sticky="ew", pady=(8, 0))
     settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
     settings_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
@@ -261,6 +323,7 @@ def run_window() -> int:
     open_button.pack(side="right")
     if updater.is_packaged():
         _offer_update(root, status, [process_button, settings_button], lambda: busy)
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
     return 0
 
@@ -299,7 +362,7 @@ def run_update() -> int:
             _emit(sys.stdout, f"{APP_NAME} {__version__} is up to date.")
             return 0
         updater.install(updater.download(update), reopen=False)
-    except (OSError, ValueError) as error:
+    except Exception as error:  # the windowed app has no console to show a traceback
         _emit(sys.stderr, f"Error: the update didn't finish. {error}")
         return 1
     _emit(sys.stdout, f"Installing {APP_NAME} {update.version}.")

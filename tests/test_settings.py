@@ -373,3 +373,116 @@ def test_weekend_and_quarter_hour_mistakes_are_explained(departments, weekend, m
     write_settings(settings.file_path(), departments=departments, weekend=weekend)
     with pytest.raises(UnsupportedExport, match=message):
         settings.load()
+
+
+# --- Mistakes the file's editor can make ------------------------------------------
+
+
+def mistake(text):
+    settings.file_path().write_text(text, encoding="utf-8")
+    with pytest.raises(UnsupportedExport, match="has a mistake in it") as stopped:
+        settings.load()
+    assert "Details" not in str(stopped.value)  # in plain words, not Python's
+    return str(stopped.value)
+
+
+def section(supervisors="{}", departments="{}", members="{}", extra=""):
+    return (
+        '{"organizations": {"Org": {"supervisors": %s, "department_schedules": %s, "member_schedules": %s%s}}}'
+        % (supervisors, departments, members, extra)
+    )
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        # A crew working Monday to Thursday would otherwise be paid as Monday to Friday.
+        (section(departments='{"A": {"start": "07:00", "end": "17:30", "day": ["Mon"]}}'), '"day" isn\'t a setting'),
+        (section(departments='{"A": {"start": "08:00", "end": "16:30", "weekends": {}}}'), '"weekends" isn\'t a setting'),
+        (section(extra=', "weekend_schedules": {}'), '"weekend_schedules" isn\'t a setting'),
+        ('{"organizations": {}, "organisations": {}}', '"organisations" isn\'t a setting'),
+    ],
+)
+def test_a_misspelled_setting_is_refused_not_ignored(text, message):
+    found = mistake(text)
+    assert message in found and "check its spelling" in found
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        ("not json", "on line 1"),
+        ('{"organizations": {\n"Org": {"supervisors": {"A": "B",},\n"department_schedules": {}, "member_schedules": {}}}}', "on line 2"),
+        ("[]", "should start with {"),
+        ("{}", 'needs "organizations"'),
+        ('{"organizations": {"Org": {"supervisors": {}, "department_schedules": {}}}}', 'Org needs "member_schedules"'),
+        ('{"organizations": {"Org": []}}', "Org should be a list of settings"),
+        (section(supervisors="[]"), "Org, supervisors should be a list of settings"),
+        (section(departments='{"A": {"start": "8am", "end": "16:30"}}'), '"8am" isn\'t a time'),
+        (section(departments='{"A": {"start": 8, "end": "16:30"}}'), "8 isn't a time"),
+        (section(departments='{"A": {"start": "08:00"}}'), 'Org, A needs "end"'),
+        (section(departments='{"A": {"start": "16:30", "end": "08:00"}}'), "must be later than the start"),
+        (section(departments='{"A": {"start": "08:00", "end": "08:15"}}'), "leaves no paid hours"),
+        (section(departments='{"A": {"start": "08:00", "end": "16:30", "days": ["Monday"]}}'), '"Monday" isn\'t a day'),
+        (section(departments='{"A": {"start": "08:00", "end": "16:30", "days": []}}'), "days should list the days worked"),
+        (section(departments='{"A": {"start": "08:00", "end": "16:30", "days": "Mon"}}'), "days should list the days worked"),
+        (section(extra=', "weekend_schedule": []'), "weekend_schedule should be a list of settings"),
+    ],
+)
+def test_common_mistakes_are_explained_in_plain_words(text, message):
+    assert message in mistake(text)
+
+
+def test_a_file_not_saved_as_plain_text_says_how_to_save_it():
+    settings.file_path().write_bytes(b"\xff\xfe")
+    with pytest.raises(UnsupportedExport, match="Encoding to UTF-8"):
+        settings.load()
+
+
+def test_a_space_around_a_department_or_member_code_still_matches(tmp_path):
+    share({" Assembly ": "Dana Smith"}, {"Assembly ": DAY_SHIFT}, {" XY-1": LONG_SHIFT})
+    loaded = settings.load().organization(COMPANY)
+    assert loaded.supervisors == {"Assembly": "Dana Smith"}
+    assert loaded.schedule_for("anyone", "Assembly").start == time(8)
+    assert loaded.schedule_for("XY-1", "Assembly").start == time(7)
+    result = make_reports(tmp_path)
+    assert "Dana Smith" in [group.title for group in result.groups]
+
+
+# --- The oldest version of the app the file allows ---------------------------------
+
+
+def with_minimum(version, rest='"organizations": {}'):
+    settings.file_path().write_text('{"minimum_version": %s, %s}' % (version, rest), encoding="utf-8")
+
+
+@pytest.mark.parametrize("version", ['"0.0.1"', f'"{settings.__version__}"', f'"v{settings.__version__}"'])
+def test_a_file_for_this_version_or_an_older_one_is_used(version):
+    with_minimum(version)
+    assert settings.load().organizations == {}
+
+
+def test_a_file_for_a_newer_version_asks_for_the_update_and_makes_nothing(tmp_path):
+    share({"Assembly": "Dana Smith"})
+    settings.load()
+    good_copy = settings.saved_copy_path().read_bytes()
+    with_minimum('"99.0.0"')
+    with pytest.raises(UnsupportedExport, match="needs Punch Clock 99.0.0 or newer") as stopped:
+        make_reports(tmp_path)
+    message = str(stopped.value)
+    assert settings.__version__ in message and "offers to update" in message and "mistake" not in message
+    assert [path.name for path in tmp_path.iterdir()] == ["export.xlsx"]
+    assert settings.saved_copy_path().read_bytes() == good_copy  # the older copy never stands in
+
+
+def test_a_newer_file_asks_for_the_update_rather_than_calling_its_new_settings_mistakes():
+    with_minimum('"99.0.0"', '"organizations": {}, "something_new": {}')
+    with pytest.raises(UnsupportedExport, match="needs Punch Clock 99.0.0 or newer"):
+        settings.load()
+
+
+@pytest.mark.parametrize("version", ['"soon"', '"1.0"', "9", '""'])
+def test_a_minimum_version_that_isnt_a_version_is_a_mistake(version):
+    with_minimum(version)
+    with pytest.raises(UnsupportedExport, match="should be a version number in quotes"):
+        settings.load()

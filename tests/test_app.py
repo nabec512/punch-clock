@@ -1,3 +1,5 @@
+import time
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import pytest
@@ -19,19 +21,46 @@ def choose_file(monkeypatch, source):
     monkeypatch.setattr(filedialog, "askopenfilename", lambda **_: str(source))
 
 
-def test_cancelling_the_file_picker_does_nothing(monkeypatch, dialogs, tmp_path):
+@pytest.fixture(scope="module")
+def tk_root():
+    root = tk.Tk()
+    yield root
+    root.destroy()
+
+
+@pytest.fixture
+def choose_and_process(tk_root, monkeypatch):
+    """Choose the file and make the reports as the window does, in the background. Returns the result, or None."""
+    monkeypatch.setattr(app, "POLL_MS", 5)
+
+    def run(working=lambda _: None):
+        source = app.choose_export(tk_root)
+        if not source:
+            return None
+        finished = []
+        app.process_in_window(tk_root, source, working, finished.append)
+        end = time.time() + 30
+        while not finished and time.time() < end:
+            tk_root.update()
+            time.sleep(0.005)
+        return finished[0]
+
+    return run
+
+
+def test_cancelling_the_file_picker_does_nothing(monkeypatch, dialogs, tmp_path, choose_and_process):
     choose_file(monkeypatch, "")
-    assert app.choose_and_process(None) is None
+    assert choose_and_process() is None
     assert dialogs == {"error": []}
     assert list(tmp_path.iterdir()) == []
 
 
-def test_process_through_the_dialogs(monkeypatch, dialogs, tmp_path):
+def test_process_through_the_dialogs(monkeypatch, dialogs, tmp_path, choose_and_process):
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)
     choose_file(monkeypatch, source)
     write_settings(settings.file_path(), {"Assembly": "Avery Lee", "Receiving": ""})
-    processed = app.choose_and_process(None)
+    processed = choose_and_process()
     assert len(processed.pdfs) == 2 and all(pdf.exists() for pdf in processed.pdfs)
     summary = app.process_summary(processed)
     assert "3 employees" in summary and "Riley Chen" in summary and "Avery Lee: 2 employees" in summary
@@ -41,7 +70,7 @@ def test_process_through_the_dialogs(monkeypatch, dialogs, tmp_path):
     assert dialogs == {"error": []}
 
 
-def test_mismatches_are_called_out_in_the_summary(monkeypatch, dialogs, tmp_path):
+def test_mismatches_are_called_out_in_the_summary(monkeypatch, dialogs, tmp_path, choose_and_process):
     source = tmp_path / "export.xlsx"
     workbook = build_workbook()
     sheet = workbook["Team Summary"]
@@ -49,7 +78,7 @@ def test_mismatches_are_called_out_in_the_summary(monkeypatch, dialogs, tmp_path
     sheet[f"K{row}"] = "1h 00m"
     workbook.save(source)
     choose_file(monkeypatch, source)
-    assert "1 total doesn't match Jibble." in app.process_summary(app.choose_and_process(None))
+    assert "1 total doesn't match Jibble." in app.process_summary(choose_and_process())
 
 
 def _summary(tmp_path, punches):
@@ -128,15 +157,15 @@ def test_choosing_a_bad_settings_file_explains_and_changes_nothing(monkeypatch, 
     assert settings.file_path() == before
 
 
-def test_unusable_export_shows_a_plain_message(monkeypatch, dialogs, tmp_path):
+def test_unusable_export_shows_a_plain_message(monkeypatch, dialogs, tmp_path, choose_and_process):
     source = tmp_path / "export.xlsx"
     source.write_text("not a workbook")
     choose_file(monkeypatch, source)
-    assert app.choose_and_process(None) is None
+    assert choose_and_process() is None
     assert "could not be opened" in dialogs["error"][0][1]
 
 
-def test_open_file_names_the_file_to_close(monkeypatch, dialogs, tmp_path):
+def test_open_file_names_the_file_to_close(monkeypatch, dialogs, tmp_path, choose_and_process):
     source, output = tmp_path / "export.xlsx", tmp_path / "report.pdf"
     build_workbook().save(source)
     choose_file(monkeypatch, source)
@@ -145,13 +174,13 @@ def test_open_file_names_the_file_to_close(monkeypatch, dialogs, tmp_path):
         raise PermissionError(5, "Access is denied", str(output.with_suffix(".pending.pdf")), None, str(output))
 
     monkeypatch.setattr(app, "process_export", locked)
-    assert app.choose_and_process(None) is None
+    assert choose_and_process() is None
     title, text = dialogs["error"][0]
     assert title == "File is in use"
     assert str(output) in text and "pending" not in text
 
 
-def test_unexpected_error_is_shown_not_swallowed(monkeypatch, dialogs, tmp_path):
+def test_unexpected_error_is_shown_not_swallowed(monkeypatch, dialogs, tmp_path, choose_and_process):
     source = tmp_path / "export.xlsx"
     build_workbook().save(source)
     choose_file(monkeypatch, source)
@@ -160,8 +189,24 @@ def test_unexpected_error_is_shown_not_swallowed(monkeypatch, dialogs, tmp_path)
         raise RuntimeError("boom")
 
     monkeypatch.setattr(app, "process_export", broken)
-    assert app.choose_and_process(None) is None
+    assert choose_and_process() is None
     assert "RuntimeError: boom" in dialogs["error"][0][1]
+
+
+@pytest.mark.parametrize("good", [True, False])
+def test_the_window_shows_it_is_working_until_the_reports_are_made_or_refused(monkeypatch, dialogs, tmp_path, choose_and_process, good):
+    source = tmp_path / "export.xlsx"
+    if good:
+        build_workbook().save(source)
+    else:
+        source.write_text("not a workbook")
+    choose_file(monkeypatch, source)
+    shown = []
+    # The message about a refused file comes after the window has stopped showing that it's working.
+    monkeypatch.setattr(messagebox, "showerror", lambda title, text, parent: shown.append("message"))
+    result = choose_and_process(shown.append)
+    assert bool(result) is good
+    assert shown == ([True, False] if good else [True, False, "message"])
 
 
 def test_command_line_process(tmp_path, capsys):
