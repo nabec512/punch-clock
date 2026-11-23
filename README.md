@@ -57,7 +57,17 @@ To make reports for just some departments, filter the export by position in Jibb
 
 Jibble's filter picks people by their position now, but each punch keeps the position the person had when they made it. So in the week someone changes position, a filter on their old department leaves them out, and the app refuses the file rather than leave out their hours. Export again with their new position selected as well. Their hours go to their old department's supervisor, as their punches say, and the other department's files can be set aside.
 
-Jibble can also go on showing someone's old position after it's changed, even on punches made since and on days not worked yet. The position filter then picks them by their new position, but the file lists them in the old one. A filtered export can be refused because of them, and the message names whoever in the old department punched first, not them. To put them in the right department until Jibble is fixed, add their member code to `member_departments` in the settings file. See [The settings file](#the-settings-file). They then get that department's supervisor and schedule, and the PDF shows that department. The validation file lists them with the position Jibble shows. Remove them once Jibble's export is right.
+### When Jibble keeps showing an old position
+
+Jibble can go on showing someone's old position after it's changed, even on punches made since and on days not worked yet. The position filter then picks them by their new position, but every row of the file lists them in the old one. So they end up in their old department's reports. A filtered export can also be refused because of them, and the message names whoever in the old department punched first, not them.
+
+Choosing a different position and then the right one again doesn't fix it. Jibble support's fix, which has worked:
+
+1. In Jibble, open the person, clear their position so they have none, and save.
+2. Open the person again, choose the right position, and save.
+3. Export again, and check that their rows in `Raw Timesheets` and `Raw Time Entries` show the new position.
+
+If that doesn't work, contact Jibble support. Until it's fixed, add their member code to `member_departments` in the settings file, as described in [The settings file](#the-settings-file). They then get that department's supervisor and schedule, and the PDF shows that department. The validation file lists them with the position Jibble shows. Remove them once Jibble's export is right.
 
 ## Weekly use
 
@@ -175,7 +185,7 @@ The file has a section for each organization, because organizations can have dep
 | `supervisors` | Who reviews each department. Leave a name blank, or the department out, and accounting reviews those employees |
 | `department_schedules` | Hours for each department, matched to the Jibble position without any `- Supervisor` ending |
 | `member_schedules` | Hours for anyone who differs from their department, by Jibble member code |
-| `member_departments` | Optional. The department someone is in, by Jibble member code, whatever their Jibble position says. For someone Jibble still shows in an old position. The department must be listed in `supervisors` or `department_schedules`. Needs version 0.10.0, so also set `minimum_version` to `"0.10.0"` |
+| `member_departments` | Optional. The department someone is in, by Jibble member code, whatever their Jibble position says. For someone Jibble still shows in an old position, when [the fix in Jibble](#when-jibble-keeps-showing-an-old-position) hasn't worked. The department must be listed in `supervisors` or `department_schedules`. Needs version 0.10.0, so also set `minimum_version` to `"0.10.0"` |
 | `start`, `end` | 24-hour times on the quarter hour (`:00`, `:15`, `:30` or `:45`). The paid hours are the time between them, less the 30-minute lunch |
 | `days` | Days worked. Leave it out for Monday to Friday |
 | `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
