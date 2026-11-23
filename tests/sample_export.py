@@ -31,17 +31,23 @@ class Person:
     punches: list[tuple] = field(default_factory=list)
 
 
-def organization(supervisors=None, departments=None, members=None, weekend=None) -> dict:
-    """One organization's section of the settings file. ``weekend`` is its hours for days off, by day name."""
+def organization(supervisors=None, departments=None, members=None, weekend=None, moved=None) -> dict:
+    """One organization's section of the settings file.
+
+    ``weekend`` is its hours for days off, by day name. ``moved`` is member_departments: a department
+    for each member code, whatever their Jibble position.
+    """
     section = {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
     if weekend is not None:
         section["weekend_schedule"] = weekend
+    if moved is not None:
+        section["member_departments"] = moved
     return section
 
 
-def write_settings(path, supervisors=None, departments=None, members=None, others=None, weekend=None) -> None:
+def write_settings(path, supervisors=None, departments=None, members=None, others=None, weekend=None, moved=None) -> None:
     """A settings file like the real one, for COMPANY plus any ``others`` by name."""
-    settings = {"organizations": {COMPANY: organization(supervisors, departments, members, weekend), **(others or {})}}
+    settings = {"organizations": {COMPANY: organization(supervisors, departments, members, weekend, moved), **(others or {})}}
     with open(path, "w", encoding="utf-8") as file:
         json.dump(settings, file, ensure_ascii=False)
 

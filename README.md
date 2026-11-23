@@ -57,6 +57,8 @@ To make reports for just some departments, filter the export by position in Jibb
 
 Jibble's filter picks people by their position now, but each punch keeps the position the person had when they made it. So in the week someone changes position, a filter on their old department leaves them out, and the app refuses the file rather than leave out their hours. Export again with their new position selected as well. Their hours go to their old department's supervisor, as their punches say, and the other department's files can be set aside.
 
+Jibble can also go on showing someone's old position after it's changed, even on punches made since and on days not worked yet. The position filter then picks them by their new position, but the file lists them in the old one. A filtered export can be refused because of them, and the message names whoever in the old department punched first, not them. To put them in the right department until Jibble is fixed, add their member code to `member_departments` in the settings file. See [The settings file](#the-settings-file). They then get that department's supervisor and schedule, and the PDF shows that department. The validation file lists them with the position Jibble shows. Remove them once Jibble's export is right.
+
 ## Weekly use
 
 **Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. A moving bar shows while the reports are being made, and the week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
@@ -154,7 +156,8 @@ The file has a section for each organization, because organizations can have dep
         "Receiving": { "start": "07:00", "end": "17:30", "days": ["Mon", "Tue", "Wed", "Thu"] },
         "Shipping": { "start": "08:00", "end": "16:30", "weekend": { "Sat": { "start": "04:30", "end": "09:30" } } }
       },
-      "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } }
+      "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } },
+      "member_departments": { "CD-1": "Receiving" }
     },
     "Second Example Ltd.": {
       "supervisors": { "Assembly": "Morgan Blake" },
@@ -172,6 +175,7 @@ The file has a section for each organization, because organizations can have dep
 | `supervisors` | Who reviews each department. Leave a name blank, or the department out, and accounting reviews those employees |
 | `department_schedules` | Hours for each department, matched to the Jibble position without any `- Supervisor` ending |
 | `member_schedules` | Hours for anyone who differs from their department, by Jibble member code |
+| `member_departments` | Optional. The department someone is in, by Jibble member code, whatever their Jibble position says. For someone Jibble still shows in an old position. The department must be listed in `supervisors` or `department_schedules`. Needs version 0.10.0, so also set `minimum_version` to `"0.10.0"` |
 | `start`, `end` | 24-hour times on the quarter hour (`:00`, `:15`, `:30` or `:45`). The paid hours are the time between them, less the 30-minute lunch |
 | `days` | Days worked. Leave it out for Monday to Friday |
 | `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
@@ -197,6 +201,7 @@ The file is edited by hand, so the app checks all of it each time and refuses it
 - A missing or extra comma, quote mark or bracket, with the line it's on.
 - A setting the app doesn't know, such as `day` for `days`. It's never ignored, because a misspelled setting would quietly change someone's pay.
 - A missing section, a time or day that can't be read, an end that isn't after its start, or a schedule that leaves no paid hours after lunch.
+- A department in `member_departments` that isn't listed in `supervisors` or `department_schedules`, as a misspelling would give that person the wrong hours.
 - The same organization, department or member code twice.
 
 Capitals don't matter in department names and member codes, and neither does a space before or after them.
@@ -241,7 +246,7 @@ The app stops with a plain message rather than risk a wrong report. It refuses a
 
 - Missing sheets or renamed columns
 - Duplicate daily rows
-- Conflicting names or positions for one member code
+- Conflicting names or positions for one member code, unless `member_departments` in the settings file sets their department
 - Punches from someone missing from the other sheets when their department is in the file
 - Unknown entry types
 - Mixed timezones

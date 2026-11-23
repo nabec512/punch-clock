@@ -94,7 +94,7 @@ def _clock(value) -> str:
 def _employee_block(export: WeeklyExport, employee: Employee, missing_supervisor: bool = False) -> list:
     block = [
         _table(
-            [[_para(f"{employee.name} ({employee.code})", 12, bold=True), _para(employee.position, 11)]],
+            [[_para(f"{employee.name} ({employee.code})", 12, bold=True), _para(employee.position_label, 11)]],
             [290, 250],
             header=False,
         ),

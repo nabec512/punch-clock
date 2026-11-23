@@ -486,3 +486,48 @@ def test_a_minimum_version_that_isnt_a_version_is_a_mistake(version):
     with_minimum(version)
     with pytest.raises(UnsupportedExport, match="should be a version number in quotes"):
         settings.load()
+
+
+# --- member_departments --------------------------------------------------------
+
+
+def test_member_departments_are_optional_and_match_any_spelling_of_the_code_and_department():
+    share({"Assembly": "Dana Smith"})
+    assert settings.load().organization(COMPANY).member_departments == {}
+    write_settings(settings.file_path(), {"Assembly": "Dana Smith"}, {"Welding": DAY_SHIFT}, moved={" xy-1 ": "assembly", "Z-1": "WELDING"})
+    assert settings.load().organization(COMPANY).member_departments == {"xy-1": "Assembly", "z-1": "Welding"}
+
+
+@pytest.mark.parametrize(
+    "moved, message",
+    [
+        # A misspelled department would give the person no schedule, or the wrong one.
+        ('{"XY-1": "Asembly"}', '"Asembly" for XY-1 isn\'t one of the departments in supervisors or department_schedules'),
+        ('{"XY-1": ""}', "the department for XY-1 must be a department name in quotes"),
+        ('{"XY-1": ["Assembly"]}', "the department for XY-1 must be a department name in quotes"),
+        ('["XY-1"]', "Org, member_departments should be a list of settings"),
+        ('{"XY-1": "Assembly", "xy-1": "Assembly"}', '"xy-1" appears twice'),
+    ],
+)
+def test_member_department_mistakes_are_refused(moved, message):
+    assert message in mistake(section(supervisors='{"Assembly": ""}', extra=f', "member_departments": {moved}'))
+
+
+def test_a_filtered_export_puts_someone_jibble_still_shows_in_their_old_position_in_their_new_one(tmp_path):
+    """Filtered to Receiving, with someone moved there whose rows Jibble still shows as Assembly."""
+    write_settings(
+        settings.file_path(),
+        {"Assembly": "Dana Smith", "Receiving": "Lee Park"},
+        {"Assembly": DAY_SHIFT, "Receiving": LONG_SHIFT},
+        moved={"CM-1": "Receiving"},
+    )
+    moved = Person("Casey Moss", "CM-1", "Assembly", [(0, "In", "07:00:00", ""), (0, "Out", "17:30:00", "")])
+    assembly = Person("Ann", "A-1", "Assembly", [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")])
+    source = tmp_path / "export.xlsx"
+    build_workbook([moved], filtered_out=[assembly]).save(source)
+    result = process_export(source)
+    assert [(group.title, [e.code for e in group.employees]) for group in result.groups] == [("Lee Park", ["CM-1"])]
+    assert result.export.employees[0].days[result.export.dates[0]].hours.paid == 600  # Receiving's 10-hour day
+    text = result.validation.read_text(encoding="utf-8")
+    assert "Department set by the settings file: Casey Moss / CM-1 in Receiving (Jibble: Assembly)" in text
+    assert "Casey Moss / CM-1 / Receiving" in text

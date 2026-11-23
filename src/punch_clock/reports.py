@@ -83,12 +83,12 @@ def process_export(
 ) -> ProcessResult:
     """Create the week's output folder beside the export, or inside ``parent``.
 
-    Supervisors and schedules come from the export's organization in the settings file.
+    Supervisors, schedules and members' departments come from the export's organization in the settings file.
     ``supervisors`` replaces that organization's supervisors.
     """
     source = Path(source)
     current = settings.load()
-    export = load_export(source)
+    export = load_export(source, departments_for=lambda company: current.organization(company).member_departments)
     organization = current.organization(export.company)
     assign_schedules(export, organization.schedule_for)
     export = with_supervisors(export, organization.supervisors if supervisors is None else supervisors)

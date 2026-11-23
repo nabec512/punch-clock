@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Optional
@@ -41,6 +41,9 @@ class Organization:
     supervisors: dict[str, str]  # a blank name means the department has none
     department_schedules: dict[str, Schedule]  # by _key of the department
     member_schedules: dict[str, Schedule]  # by _key of the member code; these override the department
+    # The department each listed member is in, by _key of the member code, whatever their Jibble position says.
+    # Spelled as in supervisors or department_schedules.
+    member_departments: dict[str, str] = field(default_factory=dict)
 
     def schedule_for(self, code: str, department: str) -> Optional[Schedule]:
         return self.member_schedules.get(_key(code)) or self.department_schedules.get(_key(department))
@@ -207,19 +210,36 @@ def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
 
 
 def _organization(name: str, entry: object) -> Organization:
-    entry = _known(entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule",), may_be_empty=True)
+    entry = _known(entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments"), may_be_empty=True)
     supervisors = _section(entry["supervisors"], f"{name}, supervisors")
     if not all(isinstance(person, str) for person in supervisors.values()):
         raise LayoutMistake(f"{name}: each supervisor must be a name in quotes, or blank.")
     weekend = _weekend(entry.get("weekend_schedule", {}), f"{name}, weekend_schedule")
     departments = _section(entry["department_schedules"], f"{name}, department_schedules")
     members = _section(entry["member_schedules"], f"{name}, member_schedules")
+    known = {_key(department): department.strip() for department in (*departments, *supervisors)}
     return Organization(
         name,
         {department.strip(): person for department, person in supervisors.items()},
         {_key(department): _schedule(hours, f"{name}, {department.strip()}", weekend) for department, hours in departments.items()},
         {_key(code): _schedule(hours, f"{name}, {code.strip()}", weekend) for code, hours in members.items()},
+        _member_departments(entry.get("member_departments", {}), f"{name}, member_departments", known),
     )
+
+
+def _member_departments(entry: object, where: str, known: dict[str, str]) -> dict[str, str]:
+    """For someone Jibble shows in the wrong position. A misspelled department would change their hours, so it's refused."""
+    moved = {}
+    for code, department in _section(entry, where).items():
+        if not isinstance(department, str) or not department.strip():
+            raise LayoutMistake(f"{where}: the department for {code.strip()} must be a department name in quotes.")
+        if _key(department) not in known:
+            raise LayoutMistake(
+                f'{where}: "{department.strip()}" for {code.strip()} isn\'t one of the departments in supervisors '
+                "or department_schedules, so check its spelling."
+            )
+        moved[_key(code)] = known[_key(department)]
+    return moved
 
 
 def _check_version(wanted: object) -> None:

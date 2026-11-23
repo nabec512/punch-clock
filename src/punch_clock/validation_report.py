@@ -19,6 +19,11 @@ def build_validation_text(export: WeeklyExport) -> str:
     included = export.included
     excluded = ", ".join(f"{e.name} / {e.code}" for e in export.excluded) or "None"
     test_accounts = ", ".join(f"{e.name} / {e.code}" for e in export.test_accounts) or "None"
+    moved = ", ".join(
+        f"{e.name} / {e.code} in {e.department} (Jibble: {e.position or 'no position'})"
+        for e in export.employees
+        if e.department_override
+    ) or "None"
     included_payroll = weekly_total(e.total("Payroll Hours") for e in included)
     lines = [
         "Weekly timesheet report - validation record",
@@ -31,6 +36,7 @@ def build_validation_text(export: WeeklyExport) -> str:
         "Sort: department A-Z, then employee name A-Z (case-insensitive).",
         f"Excluded (blank position): {excluded}",
         f"Excluded (Test position): {test_accounts}",
+        f"Department set by the settings file: {moved}",
         f"Included payroll total: {format_minutes(included_payroll)}",
         "Source reconciliation below covers the entire export, before filtering.",
         "",
@@ -109,7 +115,7 @@ def build_validation_text(export: WeeklyExport) -> str:
         lines.append(label)
     lines += ["", "EMPLOYEE NOTES"]
     for employee in export.employees:
-        lines.append(f"{employee.name} / {employee.code} / {employee.position or 'MISSING POSITION'}")
+        lines.append(f"{employee.name} / {employee.code} / {employee.position_label or 'MISSING POSITION'}")
         lines.extend(f"  {note}" for note in employee.notes)
         for day in export.dates:
             record = employee.days[day]

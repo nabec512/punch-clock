@@ -287,3 +287,66 @@ def test_not_a_workbook_is_rejected(tmp_path):
     path.write_text("not a workbook")
     with pytest.raises(UnsupportedExport, match="could not be opened"):
         load_export(path)
+
+
+# --- Departments set by the settings file --------------------------------------
+# For someone Jibble keeps showing in their old position after it was changed.
+
+
+def _moved(**departments):
+    return lambda _company: {code.lower().replace("_", "-"): department for code, department in departments.items()}
+
+
+def test_the_settings_file_decides_the_department_but_jibbles_position_is_kept():
+    export = read_workbook(build_workbook(), "sample.xlsx", departments_for=_moved(so_1="Receiving"))
+    moved = next(e for e in export.employees if e.code == "SO-1")
+    assert (moved.department, moved.position, moved.position_label) == ("Receiving", "Assembly", "Receiving")
+    assert "In Receiving because the settings file puts them there. Jibble lists them as Assembly." in moved.notes
+    assert export.review_count == 0
+
+
+def test_someone_moved_into_a_filtered_department_does_not_bring_their_old_one_with_them():
+    # Filtered to Receiving. The moved person's rows still say Assembly, so without the setting
+    # the file looks like it covers Assembly, and everyone else's Assembly punches are refused.
+    receiving = [p for p in default_people() if p.position == "Receiving"]
+    moved = Person("Casey Moss", "CM-1", "Assembly", [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")])
+    left_out = [p for p in default_people() if p.position.startswith("Assembly")]
+    workbook = lambda: build_workbook([*receiving, moved], filtered_out=left_out)
+    with pytest.raises(UnsupportedExport, match="has punches in Assembly"):
+        read(workbook())
+    export = read_workbook(workbook(), "sample.xlsx", departments_for=_moved(cm_1="Receiving"))
+    assert {e.code: e.department for e in export.employees} == {"LZ-1": "Receiving", "CM-1": "Receiving"}
+    assert export.skipped_entry_rows == sum(len(p.punches) for p in left_out)
+
+
+def test_someone_moved_out_of_a_filtered_department_is_left_out_with_it():
+    # Filtered to Assembly. The moved person is now in Receiving, so Jibble leaves them out,
+    # though their punches still say Assembly.
+    assembly = [p for p in default_people() if p.position.startswith("Assembly")]
+    moved = Person("Casey Moss", "CM-1", "Assembly", [(0, "In", "08:00:00", ""), (0, "Out", "16:30:00", "")])
+    workbook = lambda: build_workbook(assembly, filtered_out=[moved])
+    with pytest.raises(UnsupportedExport, match="has punches in Assembly"):
+        read(workbook())
+    export = read_workbook(workbook(), "sample.xlsx", departments_for=_moved(cm_1="Receiving"))
+    assert export.skipped_entry_rows == 2
+
+
+def test_a_position_changed_mid_week_is_fine_once_the_settings_file_decides():
+    workbook = build_workbook()
+    sheet = workbook["Raw Timesheets"]
+    code, position = column_letter(sheet, "Member Code"), column_letter(sheet, "Position")
+    first = next(row for row in range(2, sheet.max_row + 1) if sheet[f"{code}{row}"].value == "SO-1")
+    sheet[f"{position}{first}"] = "Receiving"
+    with pytest.raises(UnsupportedExport, match="more than one position"):
+        read(workbook)
+    export = read_workbook(workbook, "sample.xlsx", departments_for=_moved(so_1="Receiving"))
+    moved = next(e for e in export.employees if e.code == "SO-1")
+    assert (moved.department, moved.position) == ("Receiving", "Assembly, Receiving")
+
+
+def test_someone_with_no_jibble_position_is_included_once_the_settings_file_places_them():
+    export = read_workbook(build_workbook(), "sample.xlsx", departments_for=_moved(rc_1="Receiving"))
+    assert "RC-1" in [e.code for e in export.included] and export.excluded == []
+    assert "In Receiving because the settings file puts them there. Jibble lists them with no position." in next(
+        e for e in export.employees if e.code == "RC-1"
+    ).notes

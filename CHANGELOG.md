@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- The settings file can put someone in a department whatever their Jibble position says, with `"member_departments": { "AB-1": "Shipping" }` in an organization's section. This is for someone Jibble still shows in their old position after it's changed. They get that department's supervisor and schedule, and a position filter on that department no longer refuses the file because of them. The PDF shows the department, and the validation file lists them with the position Jibble shows. The department must be one listed in `supervisors` or `department_schedules`.
+- For someone in `member_departments`, a position that changes during the week no longer stops the run.
+- **Set `"minimum_version": "0.10.0"` in the settings file when adding `member_departments`.** Older versions refuse a file with it.
+
 ## 0.9.0
 
 Catches mistakes in the settings file instead of ignoring them, and shows that the reports are being made.

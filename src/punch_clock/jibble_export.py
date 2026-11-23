@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
@@ -28,6 +28,9 @@ ENTRY_COLUMNS = ["Date", "Full Name", "Member Code", "Entry Type", "Time", "Time
 TIMESHEETS, ENTRIES, TEAM = "Raw Timesheets", "Raw Time Entries", "Team Summary"
 
 ScheduleLookup = Callable[[str, str], Optional[Schedule]]  # by member code and department
+# For the organization named in the export: the department to put each listed member in, by
+# lowercased member code, whatever position Jibble shows for them.
+DepartmentLookup = Callable[[str], Mapping[str, str]]
 
 # Metric name -> column label on an individual employee summary sheet.
 INDIVIDUAL_LABELS = {
@@ -94,18 +97,26 @@ class DayRecord:
 class Employee:
     code: str
     name: str
-    position: str = ""
+    position: str = ""  # as Jibble shows it
+    department_override: str = ""  # from the settings file, which decides over the position
     days: dict[date, DayRecord] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     @property
     def has_position(self) -> bool:
-        return bool(self.position)
+        return bool(self.position or self.department_override)
 
     @property
     def department(self) -> str:
+        if self.department_override:
+            return self.department_override
         match = SUPERVISOR_POSITION.match(self.position)
         return match[1] if match else self.position
+
+    @property
+    def position_label(self) -> str:
+        """The position to show on reports: the department the settings file puts them in, if it does."""
+        return self.department_override or self.position
 
     @property
     def is_test(self) -> bool:
@@ -173,17 +184,29 @@ def _no_schedule(_code: str, _department: str) -> None:
     return None
 
 
-def load_export(path: str | Path, schedule_for: ScheduleLookup = _no_schedule) -> WeeklyExport:
+def _no_departments(_company: str) -> Mapping[str, str]:
+    return {}
+
+
+def load_export(
+    path: str | Path, schedule_for: ScheduleLookup = _no_schedule, departments_for: DepartmentLookup = _no_departments
+) -> WeeklyExport:
     path = Path(path)
     data = path.read_bytes()
     try:
         workbook = openpyxl.load_workbook(path, data_only=True)
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
         raise UnsupportedExport(f"{path.name} could not be opened. Make sure it's an Excel file.") from error
-    return read_workbook(workbook, path.name, hashlib.sha256(data).hexdigest(), schedule_for)
+    return read_workbook(workbook, path.name, hashlib.sha256(data).hexdigest(), schedule_for, departments_for)
 
 
-def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: ScheduleLookup = _no_schedule) -> WeeklyExport:
+def read_workbook(
+    workbook,
+    source_name: str,
+    digest: str = "",
+    schedule_for: ScheduleLookup = _no_schedule,
+    departments_for: DepartmentLookup = _no_departments,
+) -> WeeklyExport:
     for sheet in (TIMESHEETS, ENTRIES, TEAM):
         if sheet not in workbook:
             raise UnsupportedExport(f"This file is missing a sheet called {sheet}. Export it from Jibble again with all the options turned on.")
@@ -192,9 +215,12 @@ def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: Sc
     entry_headers, entry_rows = _read_table(workbook[ENTRIES], ENTRY_COLUMNS)
 
     period, start = _read_week(team_rows)
+    company = _read_company(team_rows)
+    # Before the punches, as the departments decide which punches the file leaves out on purpose.
+    moved = departments_for(company)
     dates = [start + timedelta(days=i) for i in range(7)]
-    employees = _read_employees(timesheet_rows, timesheet_headers, dates)
-    timezone, skipped = _attach_punches(employees, entry_rows, dates)
+    employees = _read_employees(timesheet_rows, timesheet_headers, dates, moved)
+    timezone, skipped = _attach_punches(employees, entry_rows, dates, moved)
 
     checks: list[Check] = []
     for employee in employees.values():
@@ -205,7 +231,7 @@ def read_workbook(workbook, source_name: str, digest: str = "", schedule_for: Sc
     _check_calculated_gross(employees, dates, checks)
 
     return WeeklyExport(
-        company=_read_company(team_rows),
+        company=company,
         period=period,
         start=start,
         end=dates[-1],
@@ -315,7 +341,9 @@ def _read_exported_text(team_rows: Sequence[tuple]) -> str:
 # --- Raw sheets --------------------------------------------------------------
 
 
-def _read_employees(rows: list[dict], headers: Sequence[str], dates: list[date]) -> dict[str, Employee]:
+def _read_employees(
+    rows: list[dict], headers: Sequence[str], dates: list[date], moved: Mapping[str, str]
+) -> dict[str, Employee]:
     employees: dict[str, Employee] = {}
     positions: dict[str, set[str]] = defaultdict(set)
     break_columns = [h for h in headers if h.endswith(" Start") or h.endswith(" End")]
@@ -349,6 +377,16 @@ def _read_employees(rows: list[dict], headers: Sequence[str], dates: list[date])
             last_out=cells["Last Out"],
         )
     for code, employee in employees.items():
+        employee.department_override = moved.get(code.casefold(), "")
+        if employee.department_override:
+            # The settings file decides the department, so a position Jibble changed mid-week doesn't matter.
+            employee.position = ", ".join(sorted(filter(None, positions[code]), key=str.casefold))
+            if employee.position.casefold() != employee.department_override.casefold():
+                shown = f"as {employee.position}" if employee.position else "with no position"
+                employee.notes.append(
+                    f"In {employee.department_override} because the settings file puts them there. Jibble lists them {shown}."
+                )
+            continue
         if len(positions[code]) > 1:
             raise UnsupportedExport(f"{code} has more than one position this week. Fix this in Jibble, then export again.")
         employee.position = next(iter(positions[code]))
@@ -361,14 +399,15 @@ def _department_of(position) -> str:
     return (match[1] if match else text).casefold()
 
 
-def _outside_export(employees: dict[str, Employee], cells: dict, where: str) -> bool:
+def _outside_export(employees: dict[str, Employee], cells: dict, where: str, moved: Mapping[str, str]) -> bool:
     """True for a punch by someone the export leaves out, so it can be skipped.
 
     Jibble's position filter leaves people out of every sheet except Raw Time Entries.
     Skipping is only safe when that person's whole department is left out: someone missing
     from a department the file does cover would lose hours from that department's report.
     That happens when someone changes position: the filter picks people by their position
-    now, but each punch keeps the position they had when they made it.
+    now, but each punch keeps the position they had when they made it. Someone the settings file
+    puts in a department belongs to that department, whatever position their punches show.
     """
     code = _text(cells["Member Code"])
     if not code or code in employees:
@@ -379,7 +418,8 @@ def _outside_export(employees: dict[str, Employee], cells: dict, where: str) -> 
             f"{where}: {person} has punches but isn't in the {TIMESHEETS} sheet. Export the file from Jibble again."
         )
     covered = {e.department.casefold() for e in employees.values()}
-    if _department_of(cells["Position"]) not in covered:
+    department = moved.get(code.casefold(), "").casefold() or _department_of(cells["Position"])
+    if department not in covered:
         return True
     raise UnsupportedExport(
         f"{where}: {person} has punches in {_text(cells['Position'])}, but Jibble left them out of the rest "
@@ -388,7 +428,9 @@ def _outside_export(employees: dict[str, Employee], cells: dict, where: str) -> 
     )
 
 
-def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: list[date]) -> tuple[str, list[dict]]:
+def _attach_punches(
+    employees: dict[str, Employee], rows: list[dict], dates: list[date], moved: Mapping[str, str]
+) -> tuple[str, list[dict]]:
     """Attach In/Out punches to each employee's days.
 
     Returns the single timezone, and the rows skipped because the export leaves those people out.
@@ -398,7 +440,7 @@ def _attach_punches(employees: dict[str, Employee], rows: list[dict], dates: lis
     skipped = []
     for cells in rows:
         where = f"{ENTRIES} row {cells['_row']}"
-        if _outside_export(employees, cells, where):
+        if _outside_export(employees, cells, where, moved):
             skipped.append(cells)
             continue
         code, when, time = _text(cells["Member Code"]), cells["Date"], cells["Time"]
