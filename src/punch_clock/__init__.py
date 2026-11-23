@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 
 def version_numbers(text: str) -> Optional[tuple[int, int, int]]:

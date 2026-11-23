@@ -322,10 +322,10 @@ def test_daily_totals_are_not_repeated_for_multiple_punch_pairs(tmp_path):
     build_workbook(people).save(source)
     sheet = Sheet(review_file(process_export(source), "Bea"))
     rows = [r for r in range(sheet.first, sheet.sheet.max_row + 1) if sheet.sheet.cell(r, sheet.columns[EMPLOYEE]).value == "Ann - Paint"]
-    assert len(rows) == 8  # every day of the week plus the week total, not one row per punch pair
-    assert sheet.sheet.cell(rows[0], sheet.columns["Clock in"]).value == "8:00 AM\n1:00 PM"
-    assert sheet.sheet.cell(rows[0], sheet.columns["Clock out"]).value == "12:00 PM\n4:00 PM"
-    assert sheet.sheet.cell(rows[1], sheet.columns["Clock in"]).value == "-"  # no punches that day
+    assert len(rows) == 9  # the name row, every day of the week and the week total, not one row per punch pair
+    assert sheet.sheet.cell(rows[1], sheet.columns["Clock in"]).value == "8:00 AM\n1:00 PM"
+    assert sheet.sheet.cell(rows[1], sheet.columns["Clock out"]).value == "12:00 PM\n4:00 PM"
+    assert sheet.sheet.cell(rows[2], sheet.columns["Clock in"]).value == "-"  # no punches that day
 
 
 def test_every_row_names_the_employee_and_their_department(processed):
@@ -334,6 +334,20 @@ def test_every_row_names_the_employee_and_their_department(processed):
     assert {"Ann Painter - Paint", "Bea Boss - Paint"} <= labels  # the supervisor tag isn't part of the department
     total = sheet.row_for("Ann Painter", WEEK_TOTAL)
     assert sheet.sheet.cell(total, sheet.columns[EMPLOYEE]).value == "Ann Painter - Paint"
+
+
+def test_each_employee_starts_with_a_name_row_and_ends_with_a_gap(processed):
+    sheet = Sheet(review_file(processed, "Bea Boss"))
+    cell = lambda row, label: sheet.sheet.cell(row, sheet.columns[label])
+    names = [r for r in range(sheet.first, sheet.sheet.max_row + 1) if cell(r, DATE).value is None and cell(r, EMPLOYEE).value]
+    assert [cell(r, EMPLOYEE).value for r in names] == ["Ann Painter - Paint", "Bea Boss - Paint", "Cal Painter - Paint"]
+    assert names[0] == sheet.first
+    assert all(cell(r, EMPLOYEE).font.b for r in names)
+    assert sheet.row_for("Ann Painter", MONDAY) == names[0] + 1
+    gap = sheet.row_for("Ann Painter", WEEK_TOTAL) + 1
+    assert all(c.value is None for c in sheet.sheet[gap])
+    assert gap + 1 == names[1]
+    assert sheet.row_for("Cal Painter", WEEK_TOTAL) == sheet.sheet.max_row  # no gap after the last one
 
 
 def test_columns_are_the_ones_supervisors_need(processed):

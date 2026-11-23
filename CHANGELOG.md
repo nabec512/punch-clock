@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+Makes the review spreadsheet easier to read.
+- Each employee's section now starts with a shaded row showing their name and department, and there's an empty row between employees. Before, the bold name on the Week total row looked like a heading for the next employee's days.
+- The Regular hours, Overtime hours and Total approved hours cells on each Week total row are now purple, so accounting can find them quickly. A day's overtime is still green.
+
 ## 0.10.0
 
 - The settings file can put someone in a department whatever their Jibble position says, with `"member_departments": { "AB-1": "Shipping" }` in an organization's section. This is for someone Jibble still shows in their old position after it's changed, when the fix in Jibble hasn't worked: clear their position and save, then open them again and choose the new one. The README explains this under "When Jibble keeps showing an old position". They get that department's supervisor and schedule, and a position filter on that department no longer refuses the file because of them. The PDF shows the department, and the validation file lists them with the position Jibble shows. The department must be one listed in `supervisors` or `department_schedules`.

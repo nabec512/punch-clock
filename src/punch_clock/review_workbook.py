@@ -38,6 +38,8 @@ COLUMNS = [
 COLUMN = {label: index for index, (label, _) in enumerate(COLUMNS)}
 
 INSTRUCTIONS = [
+    "Each employee starts with a shaded row with their name, then one row per day, then their Week total row. "
+    "The purple cells in the Week total row are the employee's regular, overtime and total approved hours for the week.",
     "Only the yellow and orange cells can be changed.",
     "Hours are paid in 15-minute blocks, rounded down. Total approved hours = Regular hours + Overtime hours.",
     "Adjustment is in minutes, in steps of 15, added to the total approved hours: 15 adds 15 minutes, "
@@ -76,6 +78,8 @@ def _formats(workbook) -> dict:
         "note": make({"font_color": "#52616A"}),
         "header": make({"bold": True, "bg_color": "#183340", "font_color": "#FFFFFF", "text_wrap": True, "valign": "vcenter"}),
         "text": make({"valign": "top"}),
+        "name": make({"valign": "top", "font_color": "#7A868C"}),
+        "banner": make({"bold": True, "font_size": 12, "bg_color": "#C9DCE5", "top": 2, "top_color": "#183340", "valign": "vcenter"}),
         "notes": make({"valign": "top", "text_wrap": True, "indent": 1}),
         "wrap": make({"valign": "top", "text_wrap": True}),
         "date": make({"num_format": "ddd mmm d", "align": "left", "valign": "top"}),
@@ -91,6 +95,8 @@ def _formats(workbook) -> dict:
         "total": make(total),
         "total_wrap": make({**total, "text_wrap": True, "indent": 1}),
         "total_duration": make({**total, **duration, "valign": "top"}),
+        # The figures accounting looks for, in a color nothing else on the sheet uses.
+        "week_hours": make({**total, **duration, "bg_color": "#E3D7F4", "border": 1, "border_color": "#7B5EA7", "top": 2}),
         "total_number": make({**total, "num_format": "+0;-0;0", "align": "right"}),
         "bad": make({"font_color": "#9C0006", "bg_color": "#FFC7CE"}),
     }
@@ -146,7 +152,9 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
     sheet.set_row(HEADER_ROW, 32)
 
     row = HEADER_ROW + 1
-    for employee in group.employees:
+    for index, employee in enumerate(group.employees):
+        if index:
+            row += 1  # an empty row between employees
         row = _write_employee(sheet, formats, export, employee, row)
 
     last = row - 1
@@ -158,9 +166,10 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
         {"type": "cell", "criteria": "<", "value": 0, "format": formats["bad"]},
     )
     first_overtime = xl_rowcol_to_cell(HEADER_ROW + 1, COLUMN[OVERTIME])
+    first_date = xl_rowcol_to_cell(HEADER_ROW + 1, COLUMN[DATE], col_abs=True)
     sheet.conditional_format(
         HEADER_ROW + 1, COLUMN[OVERTIME], max(last, HEADER_ROW + 1), COLUMN[OVERTIME],
-        {"type": "formula", "criteria": f"=AND(ISNUMBER({first_overtime}),{first_overtime}>0)", "format": formats["overtime_marked"]},
+        {"type": "formula", "criteria": f'=AND({first_date}<>"{WEEK_TOTAL}",ISNUMBER({first_overtime}),{first_overtime}>0)', "format": formats["overtime_marked"]},
     )
     sheet.protect("", {"autofilter": True, "format_columns": True, "format_rows": True})
     sheet.set_landscape()
@@ -171,6 +180,13 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
 
 
 def _write_employee(sheet, formats, export: WeeklyExport, employee: Employee, row: int) -> int:
+    # A name row heads each employee, so the bold Week total row isn't read as the heading of the next one.
+    # It carries the same label as their other rows, so filtering by employee keeps it.
+    sheet.set_row(row, 22)
+    sheet.write(row, COLUMN[EMPLOYEE], employee_label(employee), formats["banner"])
+    for column in range(1, len(COLUMNS)):
+        sheet.write_blank(row, column, None, formats["banner"])
+    row += 1
     first = row
     needs_hours: list[str] = []
     # Every day, so that a weekend shift with forgotten punches still has a row to enter it on.
@@ -193,7 +209,7 @@ def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) 
     # Each pair gets its own line, so a clock-in sits level with its clock-out.
     no_times = "-" if hours.gross is not None else "Missing"
 
-    sheet.write(row, COLUMN[EMPLOYEE], employee_label(employee), formats["text"])
+    sheet.write(row, COLUMN[EMPLOYEE], employee_label(employee), formats["name"])
     sheet.write_datetime(row, COLUMN[DATE], datetime.combine(record.day, time()), formats["date"])
     sheet.write(row, COLUMN[CLOCK_IN], "\n".join(_clock(s.start) for s in hours.sessions) or no_times, formats["wrap"])
     sheet.write(row, COLUMN[CLOCK_OUT], "\n".join(_clock(s.end) for s in hours.sessions) or no_times, formats["wrap"])
@@ -304,7 +320,7 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
             formula, cached = f'=IF({blanks}>0,"Needs hours",{expression})', "Needs hours"
         else:
             formula, cached = f"={expression}", minutes / 1440
-        sheet.write_formula(row, COLUMN[label], formula, formats["total_duration"], cached)
+        sheet.write_formula(row, COLUMN[label], formula, formats["week_hours"], cached)
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
     sheet.write(row, COLUMN[REVIEWED], "No", formats["edit_choice"])
     sheet.data_validation(
