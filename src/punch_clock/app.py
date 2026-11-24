@@ -69,6 +69,13 @@ def process_summary(result: ProcessResult) -> str:
         lines += ["", f"Not included because they have no position in Jibble: {', '.join(e.name for e in export.excluded)}"]
     if export.test_accounts:
         lines += ["", f"Not included because their position in Jibble is Test: {', '.join(e.name for e in export.test_accounts)}"]
+    if export.unlinked:
+        names = ", ".join(f"{e.name} ({e.code})" for e in export.employees if e.code in export.unlinked)
+        lines += [
+            "",
+            f"The {export.company} section of the settings file doesn't say who pays: {names}. "
+            "Add them under employees, with their payroll and employee number, or their agency.",
+        ]
     missing = _missing_punches(export)
     if missing:
         lines += ["", "Missing a punch, so the hours need to be entered for these days:", *missing]

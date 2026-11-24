@@ -167,14 +167,20 @@ The file has a section for each organization, because organizations can have dep
         "Shipping": { "start": "08:00", "end": "16:30", "weekend": { "Sat": { "start": "04:30", "end": "09:30" } } }
       },
       "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } },
-      "member_departments": { "CD-1": "Receiving" }
+      "member_departments": { "CD-1": "Receiving" },
+      "employees": {
+        "AB-1": { "name": "BROWN, ALEX", "payroll": "Example Payroll", "number": "1042" },
+        "CD-1": { "name": "Casey Diaz", "agency": "Example Staffing Inc." }
+      }
     },
     "Second Example Ltd.": {
       "supervisors": { "Assembly": "Morgan Blake" },
       "department_schedules": { "Assembly": { "start": "07:00", "end": "15:30" } },
       "member_schedules": {}
     }
-  }
+  },
+  "payrolls": ["Example Payroll", "Second Payroll"],
+  "agencies": ["Example Staffing Inc."]
 }
 ```
 
@@ -190,8 +196,23 @@ The file has a section for each organization, because organizations can have dep
 | `days` | Days worked. Leave it out for Monday to Friday |
 | `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
 | `weekend` | Optional, on a department or member schedule. Changes the organization's weekend hours one day at a time. Above, Shipping starts at 4:30 AM on Saturday and keeps the organization's Sunday hours. A member schedule replaces the department's, so it starts again from the organization's weekend hours |
+| `employees` | Optional. Who pays each employee, by Jibble member code. See [Who pays each employee](#who-pays-each-employee). Needs version 0.11.0 |
+| `payrolls`, `agencies` | Optional, beside `organizations` at the top. Every payroll and staffing agency named under `employees`, each written once |
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.
+
+### Who pays each employee
+
+Some employees are on a different company's books from the organization they punch in, and some are employed through a staffing agency. So the file says who pays each person, one by one, under `employees` in the section for the organization they punch in:
+
+- **Through a payroll:** `name`, `payroll` and `number`. The number is their employee number in that payroll, in quotes. Numbers only need to be unique within a payroll, but one number can't be given to two people in the same payroll anywhere in the file.
+- **Through an agency:** `name` and `agency`. The agency is sent their hours and bills for them.
+
+`name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one.
+
+Once anyone is listed, the window and the Validation file name everyone in the reports who isn't, so a new hire can be added before payday. Nothing uses these links to pay anyone yet. They're the first part of preparing hours for the payroll and the agencies.
+
+Set `minimum_version` to `"0.11.0"` when adding them, as older versions refuse a file with them.
 
 An export from an organization with no section of its own is refused, with a message giving its name exactly as the export spells it, so it never gets another organization's supervisors or hours. To process it, add a section with that name. Settings files from before version 0.6.0 have no sections. The app refuses them and says how to fix them: put the existing `supervisors`, `department_schedules` and `member_schedules` inside a section named for their organization.
 
@@ -212,6 +233,7 @@ The file is edited by hand, so the app checks all of it each time and refuses it
 - A setting the app doesn't know, such as `day` for `days`. It's never ignored, because a misspelled setting would quietly change someone's pay.
 - A missing section, a time or day that can't be read, an end that isn't after its start, or a schedule that leaves no paid hours after lunch.
 - A department in `member_departments` that isn't listed in `supervisors` or `department_schedules`, as a misspelling would give that person the wrong hours.
+- A payroll or agency under `employees` that isn't listed at the top, an employee number that isn't all digits, someone linked to both a payroll and an agency, or one employee number given to two people in the same payroll.
 - The same organization, department or member code twice.
 
 Capitals don't matter in department names and member codes, and neither does a space before or after them.

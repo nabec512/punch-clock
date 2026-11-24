@@ -531,3 +531,139 @@ def test_a_filtered_export_puts_someone_jibble_still_shows_in_their_old_position
     text = result.validation.read_text(encoding="utf-8")
     assert "Department set by the settings file: Casey Moss / CM-1 in Receiving (Jibble: Assembly)" in text
     assert "Casey Moss / CM-1 / Receiving" in text
+
+
+# --- Who pays each employee: a payroll and employee number, or an agency ------------
+
+PAYROLL_LINKS = {
+    "AL-1": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "1001"},
+    "SO-1": {"name": "Sam Ortiz", "agency": "Temp Staffing Inc."},
+}
+
+
+def links(employees, payrolls='["Main Payroll", "Second Payroll"]', agencies='["Temp Staffing Inc."]'):
+    top = "".join(f', "{key}": {value}' for key, value in (("payrolls", payrolls), ("agencies", agencies)) if value)
+    organization = '"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {}, "employees": %s}' % employees
+    return '{"organizations": {%s}%s}' % (organization, top)
+
+
+def test_who_pays_is_optional():
+    share({"Assembly": "Dana Smith"})
+    loaded = settings.load()
+    assert not loaded.links_pay and loaded.payrolls == () and loaded.agencies == ()
+    assert loaded.organization(COMPANY).pay_link("AL-1") is None
+
+
+def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
+    write_settings(
+        settings.file_path(),
+        employees={
+            " al-1 ": {"name": " LEE,  AVERY ", "payroll": "main payroll", "number": "0012"},
+            "SO-1": {"name": "Sam Ortiz", "agency": "TEMP STAFFING INC."},
+            "LZ-1": {"name": "ZAK, LUCJA", "payroll": "Second Payroll", "number": 12},
+        },
+        payrolls=["Main Payroll", "Second Payroll"],
+        agencies=["Temp Staffing Inc."],
+    )
+    loaded = settings.load()
+    assert loaded.links_pay
+    assert loaded.payrolls == ("Main Payroll", "Second Payroll") and loaded.agencies == ("Temp Staffing Inc.",)
+    organization = loaded.organization(COMPANY)
+    # Spelled as listed at the top, whatever the capitals, and the number kept as written.
+    assert organization.pay_link("AL-1") == settings.PayLink("LEE, AVERY", "Main Payroll", "0012")
+    assert organization.pay_link("so-1") == settings.PayLink("Sam Ortiz", agency="Temp Staffing Inc.")
+    # Numbers are only unique within a payroll, so 12 in another one is someone else.
+    assert organization.pay_link("LZ-1") == settings.PayLink("ZAK, LUCJA", "Second Payroll", "12")
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        # A misspelled payroll or agency would otherwise become one of its own.
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payrol", "number": "1"}}'), '"Main Payrol" isn\'t one of the payrolls listed'),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": "1"}}', payrolls=""), 'needs to be listed in "payrolls"'),
+        (links('{"A-1": {"name": "Ann", "agency": "Temp Staffing"}}'), '"Temp Staffing" isn\'t one of the agencies listed'),
+        (links('{"A-1": {"name": "Ann", "agency": "Temp Staffing Inc.", "payroll": "Main Payroll", "number": "1"}}'), "not both"),
+        (links('{"A-1": {"name": "Ann"}}'), 'Org, employees, A-1 needs "payroll" and "number", or "agency"'),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll"}}'), 'needs "number", their employee number in Main Payroll'),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": "1597.48"}}'), '"1597.48" isn\'t an employee number'),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": ""}}'), '"" isn\'t an employee number'),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": true}}'), "true isn't an employee number"),
+        (links('{"A-1": {"payroll": "Main Payroll", "number": "1"}}'), 'Org, employees, A-1 needs "name"'),
+        (links('{"A-1": {"name": " ", "agency": "Temp Staffing Inc."}}'), "name must be their name in quotes"),
+        (links('{"A-1": "Main Payroll"}'), "Org, employees, A-1 should be a list of settings"),
+        (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "employee_number": "1"}}'), '"employee_number" isn\'t a setting'),
+        (links("{}", payrolls='"Main Payroll"'), "payrolls should list names in quotes"),
+        (links("{}", agencies='["Temp Staffing Inc.", ""]'), "agencies should list names in quotes"),
+        (links("{}", payrolls='["Main Payroll", "main  payroll"]'), '"main  payroll" is listed twice'),
+        ('{"organizations": {}, "payroll": []}', '"payroll" isn\'t a setting'),
+        (section(extra=', "employee": {}'), '"employee" isn\'t a setting'),
+    ],
+)
+def test_who_pays_mistakes_are_refused(text, message):
+    assert message in mistake(text)
+
+
+def test_one_employee_number_can_only_belong_to_one_person_in_the_whole_file():
+    """Such as someone who moved organization and is still listed in the one they left."""
+    write_settings(
+        settings.file_path(),
+        employees={"AL-1": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "12"}},
+        payrolls=["Main Payroll"],
+        others={"Other Org": organization(employees={"XY-9": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "0012"}})},
+    )
+    message = mistake_in_file()
+    assert f"number 0012 in Main Payroll is given to both {COMPANY}, employees, AL-1 and Other Org, employees, XY-9" in message
+    assert "take them out of the one they've left" in message
+
+
+def mistake_in_file():
+    with pytest.raises(UnsupportedExport, match="has a mistake in it") as stopped:
+        settings.load()
+    return str(stopped.value)
+
+
+def test_until_the_file_says_who_pays_anyone_nobody_is_reported_missing(tmp_path):
+    share({"Assembly": "Dana Smith"})
+    result = make_reports(tmp_path)
+    assert result.export.unlinked is None
+    assert "who pays" not in process_summary(result)
+    assert "The settings file doesn't say who pays anyone yet." in result.validation.read_text(encoding="utf-8")
+
+
+def test_included_employees_nobody_pays_are_named_on_screen_and_in_the_validation_file(tmp_path):
+    write_settings(
+        settings.file_path(),
+        {"Assembly": "Dana Smith"},
+        employees=PAYROLL_LINKS,
+        payrolls=["Main Payroll"],
+        agencies=["Temp Staffing Inc."],
+    )
+    result = make_reports(tmp_path)
+    # Riley Chen has no position, so isn't in the reports and isn't listed.
+    assert result.export.unlinked == ("LZ-1",)
+    assert (
+        f"The {COMPANY} section of the settings file doesn't say who pays: Łucja Żak (LZ-1). "
+        "Add them under employees, with their payroll and employee number, or their agency."
+    ) in process_summary(result)
+    text = result.validation.read_text(encoding="utf-8")
+    assert "Linked: 2 of 3 included employees." in text and "Not linked: Łucja Żak / LZ-1" in text
+
+
+def test_once_everyone_is_linked_nothing_is_reported(tmp_path):
+    everyone = {**PAYROLL_LINKS, "LZ-1": {"name": "ZAK, LUCJA", "payroll": "Main Payroll", "number": "1002"}}
+    write_settings(settings.file_path(), employees=everyone, payrolls=["Main Payroll"], agencies=["Temp Staffing Inc."])
+    result = make_reports(tmp_path)
+    assert result.export.unlinked == ()
+    assert "who pays" not in process_summary(result)
+    assert "Not linked: None" in result.validation.read_text(encoding="utf-8")
+
+
+def test_an_organization_with_no_links_while_another_has_them_is_reported_in_full(tmp_path):
+    write_settings(
+        settings.file_path(),
+        payrolls=["Main Payroll"],
+        others={"Other Org": organization(employees={"XY-9": {"name": "Pat", "payroll": "Main Payroll", "number": "5"}})},
+    )
+    result = make_reports(tmp_path)
+    assert sorted(result.export.unlinked) == ["AL-1", "LZ-1", "SO-1"]

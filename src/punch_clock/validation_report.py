@@ -108,6 +108,13 @@ def build_validation_text(export: WeeklyExport) -> str:
     lines.append(
         f"Supervisors come from the {export.company} section of the settings file, not from Jibble positions."
     )
+    lines += ["", "WHO PAYS (payroll or agency, from the employees in the settings file)"]
+    if export.unlinked is None:
+        lines.append("The settings file doesn't say who pays anyone yet.")
+    else:
+        unlinked = ", ".join(f"{e.name} / {e.code}" for e in included if e.code in export.unlinked) or "None"
+        lines.append(f"Linked: {len(included) - len(export.unlinked)} of {len(included)} included employees.")
+        lines.append(f"Not linked: {unlinked}")
     lines += ["", f"SCHEDULES (from the {export.company} section of the settings file, Punch Clock {__version__})"]
     if export.settings_note:
         lines.append(export.settings_note)

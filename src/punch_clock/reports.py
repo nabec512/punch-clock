@@ -92,7 +92,8 @@ def process_export(
     organization = current.organization(export.company)
     assign_schedules(export, organization.schedule_for)
     export = with_supervisors(export, organization.supervisors if supervisors is None else supervisors)
-    export = replace(export, settings_note=current.note)
+    unlinked = tuple(e.code for e in export.included if organization.pay_link(e.code) is None) if current.links_pay else None
+    export = replace(export, settings_note=current.note, unlinked=unlinked)
     groups = tuple(review_groups(export))
     folder = _new_folder(Path(parent) if parent else source.parent, output_folder_name(export))
     _check_path_lengths(folder, export, groups)

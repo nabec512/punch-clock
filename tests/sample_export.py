@@ -31,23 +31,33 @@ class Person:
     punches: list[tuple] = field(default_factory=list)
 
 
-def organization(supervisors=None, departments=None, members=None, weekend=None, moved=None) -> dict:
+def organization(supervisors=None, departments=None, members=None, weekend=None, moved=None, employees=None) -> dict:
     """One organization's section of the settings file.
 
     ``weekend`` is its hours for days off, by day name. ``moved`` is member_departments: a department
-    for each member code, whatever their Jibble position.
+    for each member code, whatever their Jibble position. ``employees`` says who pays each member code.
     """
     section = {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
     if weekend is not None:
         section["weekend_schedule"] = weekend
     if moved is not None:
         section["member_departments"] = moved
+    if employees is not None:
+        section["employees"] = employees
     return section
 
 
-def write_settings(path, supervisors=None, departments=None, members=None, others=None, weekend=None, moved=None) -> None:
+def write_settings(
+    path, supervisors=None, departments=None, members=None, others=None, weekend=None, moved=None,
+    employees=None, payrolls=None, agencies=None,
+) -> None:
     """A settings file like the real one, for COMPANY plus any ``others`` by name."""
-    settings = {"organizations": {COMPANY: organization(supervisors, departments, members, weekend, moved), **(others or {})}}
+    section = organization(supervisors, departments, members, weekend, moved, employees)
+    settings = {"organizations": {COMPANY: section, **(others or {})}}
+    if payrolls is not None:
+        settings["payrolls"] = payrolls
+    if agencies is not None:
+        settings["agencies"] = agencies
     with open(path, "w", encoding="utf-8") as file:
         json.dump(settings, file, ensure_ascii=False)
 

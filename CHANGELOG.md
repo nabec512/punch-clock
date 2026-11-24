@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0
+
+The first part of preparing hours for payroll and for staffing agencies.
+- The settings file can say who pays each employee, under `employees` in their organization's section: a payroll with their employee number there, or a staffing agency. This follows the company on the books, not the organization they punch in. Every payroll and agency is also listed once in `payrolls` and `agencies` at the top of the file, so a misspelled one is refused. The README explains this under "Who pays each employee".
+- Mistakes are refused with a plain message, including an employee number that isn't all digits, someone linked to both a payroll and an agency, and one employee number given to two people in the same payroll anywhere in the file.
+- Once anyone is linked, the window and the Validation file name everyone in the reports who isn't, so they can be added before payday. Nothing uses the links to pay anyone yet.
+- **Set `"minimum_version": "0.11.0"` in the settings file when adding `employees`, `payrolls` or `agencies`.** Older versions refuse a file with them.
+
 ## 0.10.1
 
 Makes the review spreadsheet easier to read.

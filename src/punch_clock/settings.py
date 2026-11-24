@@ -12,6 +12,11 @@ drive alone. Each good read is copied to this PC, to fall back on if the file ca
 The file is edited by hand, so anything in it the app doesn't recognise is refused rather than
 ignored: a misspelled setting would otherwise quietly change someone's pay. Every PC reads the
 same file, so it can also name the oldest version of the app allowed to use it.
+
+It also says who pays each employee: a payroll, with their employee number there, or a staffing
+agency. That follows the company on the books, not the organization they punch in, so each
+employee is linked one by one. The payrolls and agencies are listed once at the top, so that a
+misspelled one is caught instead of becoming a payroll of its own.
 """
 from __future__ import annotations
 
@@ -32,7 +37,19 @@ READ_TIMEOUT_SECONDS = 5  # a dropped network drive can otherwise hold the app u
 WEEKDAYS = DAY_NAMES
 DAY_LIST = "Mon, Tue, Wed, Thu, Fri, Sat or Sun"
 MINIMUM_VERSION = "minimum_version"
+PAYROLLS = "payrolls"
+AGENCIES = "agencies"
 ORGANIZATION_SECTIONS = ("supervisors", "department_schedules", "member_schedules")
+
+
+@dataclass(frozen=True)
+class PayLink:
+    """Who pays an employee: a payroll, with their employee number there, or a staffing agency."""
+
+    name: str  # as the payroll or agency knows them, which can differ from Jibble
+    payroll: str = ""  # spelled as in the file's list of payrolls
+    number: str = ""  # their employee number in that payroll, which is only unique within it
+    agency: str = ""  # spelled as in the file's list of agencies
 
 
 @dataclass(frozen=True)
@@ -44,9 +61,13 @@ class Organization:
     # The department each listed member is in, by _key of the member code, whatever their Jibble position says.
     # Spelled as in supervisors or department_schedules.
     member_departments: dict[str, str] = field(default_factory=dict)
+    employees: dict[str, PayLink] = field(default_factory=dict)  # by _key of the member code
 
     def schedule_for(self, code: str, department: str) -> Optional[Schedule]:
         return self.member_schedules.get(_key(code)) or self.department_schedules.get(_key(department))
+
+    def pay_link(self, code: str) -> Optional[PayLink]:
+        return self.employees.get(_key(code))
 
 
 @dataclass(frozen=True)
@@ -54,6 +75,13 @@ class Settings:
     organizations: dict[str, Organization]  # by organization_key
     path: Path  # the settings file, for messages
     note: str = ""  # set when these came from the copy on this PC
+    payrolls: tuple[str, ...] = ()
+    agencies: tuple[str, ...] = ()
+
+    @property
+    def links_pay(self) -> bool:
+        """Whether the file says who pays anyone yet. Until it does, nobody is reported as missing."""
+        return any(organization.employees for organization in self.organizations.values())
 
     def organization(self, company: str) -> Organization:
         """The settings for the organization an export comes from, and never another one's."""
@@ -209,8 +237,12 @@ def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
     return dict(pairs)
 
 
-def _organization(name: str, entry: object) -> Organization:
-    entry = _known(entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments"), may_be_empty=True)
+def _organization(
+    name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], str]
+) -> Organization:
+    entry = _known(
+        entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments", "employees"), may_be_empty=True
+    )
     supervisors = _section(entry["supervisors"], f"{name}, supervisors")
     if not all(isinstance(person, str) for person in supervisors.values()):
         raise LayoutMistake(f"{name}: each supervisor must be a name in quotes, or blank.")
@@ -224,7 +256,78 @@ def _organization(name: str, entry: object) -> Organization:
         {_key(department): _schedule(hours, f"{name}, {department.strip()}", weekend) for department, hours in departments.items()},
         {_key(code): _schedule(hours, f"{name}, {code.strip()}", weekend) for code, hours in members.items()},
         _member_departments(entry.get("member_departments", {}), f"{name}, member_departments", known),
+        _pay_links(entry.get("employees", {}), f"{name}, employees", payrolls, agencies, numbers),
     )
+
+
+def _names(value: object, section: str) -> dict[str, str]:
+    """The payrolls or agencies listed at the top of the file, by organization_key, spelled as listed."""
+    if not isinstance(value, list) or not all(isinstance(name, str) and name.strip() for name in value):
+        raise LayoutMistake(f'{section} should list names in quotes between square brackets, like ["First", "Second"].')
+    names: dict[str, str] = {}
+    for name in value:
+        if organization_key(name) in names:
+            raise LayoutMistake(f'{section}: "{name.strip()}" is listed twice.')
+        names[organization_key(name)] = " ".join(name.split())
+    return names
+
+
+def _listed(value: object, where: str, listed: dict[str, str], section: str) -> str:
+    """A misspelled payroll or agency would otherwise start a file of its own, so it has to be in the list."""
+    if isinstance(value, str) and organization_key(value) in listed:
+        return listed[organization_key(value)]
+    if not listed:
+        raise LayoutMistake(
+            f'{where}: {json.dumps(value)} needs to be listed in "{section}" at the top of the file, beside "organizations".'
+        )
+    raise LayoutMistake(
+        f"{where}: {json.dumps(value)} isn't one of the {section} listed at the top of the file, so check its "
+        f"spelling. Listed: {', '.join(listed.values())}."
+    )
+
+
+def _employee_number(value: object, where: str) -> str:
+    """Kept as written, as text, in case a payroll's numbers start with a zero."""
+    text = str(value).strip() if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+    if not (text.isascii() and text.isdigit()):
+        raise LayoutMistake(f'{where}: {json.dumps(value)} isn\'t an employee number. Write it in quotes, digits only, like "1234".')
+    return text
+
+
+def _pay_links(
+    entry: object, where: str, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], str]
+) -> dict[str, PayLink]:
+    """Who pays each listed member. ``numbers`` holds the employee numbers given out so far in the whole file."""
+    links = {}
+    for code, link in _section(entry, where).items():
+        here = f"{where}, {code.strip()}"
+        link = _known(link, here, ("name",), ("payroll", "number", "agency"))
+        if not isinstance(link["name"], str) or not link["name"].strip():
+            raise LayoutMistake(f"{here}: name must be their name in quotes, as their payroll or agency knows them.")
+        name = " ".join(link["name"].split())
+        if "agency" in link:
+            if "payroll" in link or "number" in link:
+                raise LayoutMistake(
+                    f"{here}: someone is paid through a payroll or through an agency, not both. "
+                    'Keep "payroll" and "number", or keep "agency".'
+                )
+            links[_key(code)] = PayLink(name, agency=_listed(link["agency"], f"{here}, agency", agencies, AGENCIES))
+            continue
+        if "payroll" not in link:
+            raise LayoutMistake(f'{here} needs "payroll" and "number", or "agency" for someone an agency employs.')
+        payroll = _listed(link["payroll"], f"{here}, payroll", payrolls, PAYROLLS)
+        if "number" not in link:
+            raise LayoutMistake(f'{here} needs "number", their employee number in {payroll}.')
+        number = _employee_number(link["number"], here)
+        # Two people with one number would have one person's hours paid to the other.
+        taken = numbers.setdefault((payroll, int(number)), here)
+        if taken != here:
+            raise LayoutMistake(
+                f"Employee number {number} in {payroll} is given to both {taken} and {here}. If someone has moved "
+                "organization, take them out of the one they've left."
+            )
+        links[_key(code)] = PayLink(name, payroll, number)
+    return links
 
 
 def _member_departments(entry: object, where: str, known: dict[str, str]) -> dict[str, str]:
@@ -275,10 +378,15 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
             "It's laid out the old way, for a single organization. Put each organization's supervisors, "
             "department_schedules and member_schedules in a section of its own under organizations."
         )
-    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION,))
+    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES))
+    payrolls = _names(settings.get(PAYROLLS, []), PAYROLLS)
+    agencies = _names(settings.get(AGENCIES, []), AGENCIES)
+    numbers: dict[tuple[str, int], str] = {}
     sections = _section(settings["organizations"], "organizations")
-    organizations = {organization_key(name): _organization(name, entry) for name, entry in sections.items()}
-    return Settings(organizations, path, note)
+    organizations = {
+        organization_key(name): _organization(name, entry, payrolls, agencies, numbers) for name, entry in sections.items()
+    }
+    return Settings(organizations, path, note, tuple(payrolls.values()), tuple(agencies.values()))
 
 
 def _checked(data: bytes, path: Path) -> Settings:

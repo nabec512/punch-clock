@@ -154,6 +154,8 @@ class WeeklyExport:
     skipped_positions: list[str] = field(default_factory=list)
     supervisors: dict[str, str] = field(default_factory=dict)  # lowercased department to supervisor name
     settings_note: str = ""  # set when the settings came from the copy on this PC
+    # Member codes of included employees the settings file doesn't say who pays, or None while it says that for nobody.
+    unlinked: Optional[tuple[str, ...]] = None
 
     @property
     def dates(self) -> list[date]:
