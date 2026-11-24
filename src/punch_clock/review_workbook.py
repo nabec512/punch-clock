@@ -2,9 +2,14 @@
 
 Formulas are stored with their calculated results, so totals still show in
 Protected View and in Outlook or phone previews.
+
+A very hidden sheet records who each row is and the fixed figures its formulas were
+built from, so that ``approved_hours`` can read the returned file and work the
+approved hours out again rather than trust the totals in it.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, time
 from pathlib import Path
 from typing import Optional
@@ -15,12 +20,14 @@ from xlsxwriter.utility import xl_rowcol_to_cell
 from punch_clock.assignments import ReviewGroup
 from punch_clock import __version__
 from punch_clock.hours import (
-    BLOCK_MINUTES, MADE_UP_NOTE, OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes, week_hours,
+    BLOCK_MINUTES, MADE_UP_NOTE, OVERTIME_STARTS_MINUTES, clock_time, format_minutes, gap_minutes, week_full_minutes, week_hours,
 )
 from punch_clock.jibble_export import DayRecord, Employee, WeeklyExport
 
 REVIEW_SHEET = "Review"
 PUNCH_SHEET = "Punches"
+DATA_SHEET = "Punch Clock data"
+DATA_FORMAT = 1  # raise when the data sheet changes in a way an older reader would misread
 
 EMPLOYEE, DATE, CLOCK_IN, CLOCK_OUT, GROSS, LUNCH, NET = (
     "Employee", "Date", "Clock in", "Clock out", "Gross", "Lunch deduction", "Net",
@@ -58,13 +65,31 @@ INSTRUCTIONS = [
 ]
 HEADER_ROW = len(INSTRUCTIONS) + 2  # zero-based, below the title, week and instructions
 
+# The data sheet: these labels, one per row, then a table with a row for each employee's day.
+FORMAT, COMPANY, WEEK_START, REVIEW_GROUP, MADE_WITH = "Format", "Company", "Week start", "Review group", "Made with"
+DATA_COLUMNS = (
+    "Member code", "Name", "Department", "Date", "Review row", "Week total row", "Hours from punches",
+    "Punches incomplete", "Paid minutes", "Scheduled minutes", "Week scheduled minutes",
+)
+
+
+@dataclass(frozen=True)
+class _DayRow:
+    """Where one employee's day was written, for the data sheet. Rows are numbered as Excel shows them."""
+
+    employee: Employee
+    record: DayRecord
+    row: int
+    week_row: int
+
 
 def write_review_workbook(export: WeeklyExport, group: ReviewGroup, path: str | Path) -> None:
     workbook = xlsxwriter.Workbook(str(path), {"remove_timezone": True})
     workbook.set_properties({"title": f"Timesheet review - {group.title}", "author": "", "comments": ""})
     formats = _formats(workbook)
-    _write_review_sheet(workbook, formats, export, group)
+    days = _write_review_sheet(workbook, formats, export, group)
     _write_punch_sheet(workbook, formats, export, group)
+    _write_data_sheet(workbook, export, group, days)
     workbook.close()
 
 
@@ -139,7 +164,7 @@ def _day_notes(record: DayRecord) -> str:
     return " ".join(dict.fromkeys(notes))
 
 
-def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGroup) -> None:
+def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGroup) -> list[_DayRow]:
     sheet = workbook.add_worksheet(REVIEW_SHEET)
     sheet.write(0, 0, f"{export.company or 'Weekly'} timesheet review: {group.title}", formats["title"])
     version = f"{export.period}  |  Punch Clock {__version__}"
@@ -152,10 +177,11 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
     sheet.set_row(HEADER_ROW, 32)
 
     row = HEADER_ROW + 1
+    days: list[_DayRow] = []
     for index, employee in enumerate(group.employees):
         if index:
             row += 1  # an empty row between employees
-        row = _write_employee(sheet, formats, export, employee, row)
+        row = _write_employee(sheet, formats, export, employee, row, days)
 
     last = row - 1
     sheet.autofilter(HEADER_ROW, 0, max(last, HEADER_ROW), len(COLUMNS) - 1)
@@ -177,9 +203,10 @@ def _write_review_sheet(workbook, formats, export: WeeklyExport, group: ReviewGr
     sheet.fit_to_pages(1, 0)
     sheet.repeat_rows(HEADER_ROW)
     sheet.set_footer("&CPage &P of &N")
+    return days
 
 
-def _write_employee(sheet, formats, export: WeeklyExport, employee: Employee, row: int) -> int:
+def _write_employee(sheet, formats, export: WeeklyExport, employee: Employee, row: int, days: list[_DayRow]) -> int:
     # A name row heads each employee, so the bold Week total row isn't read as the heading of the next one.
     # It carries the same label as their other rows, so filtering by employee keeps it.
     sheet.set_row(row, 22)
@@ -194,6 +221,7 @@ def _write_employee(sheet, formats, export: WeeklyExport, employee: Employee, ro
         cell = _write_day(sheet, formats, employee, employee.days[day], row)
         if cell:
             needs_hours.append(cell)
+        days.append(_DayRow(employee, employee.days[day], row + 1, first + len(export.dates) + 1))
         row += 1
     _write_week_total(sheet, formats, export, employee, first, row, needs_hours)
     return row + 1
@@ -365,3 +393,33 @@ def _write_punch_sheet(workbook, formats, export: WeeklyExport, group: ReviewGro
     sheet.autofilter(0, 0, max(row - 1, 0), len(labels) - 1)
     sheet.freeze_panes(1, 0)
     sheet.protect("", {"autofilter": True, "format_columns": True})
+
+
+def _write_data_sheet(workbook, export: WeeklyExport, group: ReviewGroup, days: list[_DayRow]) -> None:
+    """Very hidden, so it doesn't show in Excel's list of hidden sheets either, and protected."""
+    sheet = workbook.add_worksheet(DATA_SHEET)
+    sheet.write(0, 0, "Punch Clock reads this sheet to check the approved hours. Don't change it.")
+    about = ((FORMAT, DATA_FORMAT), (COMPANY, export.company), (WEEK_START, export.start.isoformat()),
+             (REVIEW_GROUP, group.title), (MADE_WITH, __version__))
+    for index, (label, value) in enumerate(about, start=1):
+        sheet.write(index, 0, label)
+        sheet.write(index, 1, value)
+    header = len(about) + 2
+    for column, label in enumerate(DATA_COLUMNS):
+        sheet.write(header, column, label)
+    # Dates are written as text, so nothing depends on how a program stores dates.
+    for index, day in enumerate(days, start=header + 1):
+        hours = day.record.hours
+        week = [day.employee.days[d].hours for d in export.dates]
+        values = (
+            day.employee.code, day.employee.name, day.employee.department, day.record.day.isoformat(), day.row,
+            day.week_row, int(bool(hours.sessions) and hours.gross is not None), int(hours.gross is None),
+            hours.paid, hours.full_minutes, week_full_minutes(week),
+        )
+        for column, value in enumerate(values):
+            if value is None:
+                sheet.write_blank(index, column, None)
+            else:
+                sheet.write(index, column, value)
+    sheet.protect("")
+    sheet.very_hidden()

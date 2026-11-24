@@ -14,6 +14,13 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 
 **0.11.0: the settings file says who pays each employee.** Under `employees` in each organization's section, each member code has either a payroll and employee number, or an agency. The payrolls and agencies are listed at the top of the file. The README explains the layout under "Who pays each employee". Once anyone is linked, every report run names the employees who aren't yet, so they can be added before payday.
 
+**0.11.0: approved hours can be read back from a returned review spreadsheet** (`approved_hours.py`).
+- Each review spreadsheet carries a very hidden sheet with every row's member code and the fixed figures its formulas were built from. So a returned file says who each row is without relying on names, which aren't unique.
+- The reader takes only what a supervisor can change: adjustments, hours typed for incomplete punches, Reviewed and comments. It works each day and week out again with the same rules as the rest of the app. Where the file holds Excel's own results, they must agree.
+- Anything that stops an employee's hours being used is listed in plain words, for the whole file at once: incomplete punches with no hours typed, an adjustment that isn't in 15-minute steps or would go below zero, typed hours that aren't a length of time, and a locked cell that was typed over. Whether each employee is marked Reviewed is reported separately, and it's up to the step that uses the file what to do about it.
+- A file that isn't a review file, whose rows were moved, or that was made before 0.11.0, is refused.
+- Checked with real Excel: a file edited and saved in Excel, with an adjustment, typed hours and Reviewed set, reads back with the same totals Excel shows and no problems.
+
 ## Waiting on
 
 - **The PowerPay import layout.** One example import file or template, the pay codes for regular and overtime hours, and how dates and the pay period are written. The import file can't be written until this is known.
@@ -21,7 +28,7 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 
 ## Next
 
-1. **Read the approved hours back.** The step reads each returned supervisor workbook and works the totals out again with the same rules, rather than trusting what Excel last saved, and stops if they disagree. Corrections made on paper are typed into the workbook first, so there's one kind of input.
+1. **Gather a week's returned files.** Find every returned review spreadsheet for one week from each Jibble organization, check that none is missing or included twice, and read them all with `approved_hours`. Corrections made on paper are typed into the spreadsheet first, so there's one kind of input. This needs the decision on where approved files are kept.
 2. **Weekly payroll files.** A new button takes one week's approved files from every Jibble organization, checks they're all there and all the same week, and writes one import file per payroll. An employee with no link stops it, and agency employees are left out. A short summary gives the totals per payroll, so accounting can check them.
 3. **Agency reports, every two weeks.** A separate button reads the approved files for both weeks of the agency pay period and writes one report per agency: each person's name, regular hours, overtime hours and the period's dates. Each total is the sum of the two weeks' own figures, as overtime is worked out a week at a time. Nothing is cached between weeks: the approved files are read again, so a correction made after the first week is included.
 4. **Run alongside the manual process** for a few weeks, and compare the results with what accounting entered, before relying on it.

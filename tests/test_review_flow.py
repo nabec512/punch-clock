@@ -278,7 +278,9 @@ def test_source_copy_is_identical(processed, tmp_path):
 
 def test_supervisor_file_contains_only_their_staff(processed):
     workbook = openpyxl.load_workbook(review_file(processed, "Bea Boss"))
-    assert workbook.sheetnames == ["Review", "Punches"]
+    assert workbook.sheetnames == ["Review", "Punches", "Punch Clock data"]
+    # Supervisors never see the data sheet: it isn't even in Excel's list of hidden sheets.
+    assert workbook["Punch Clock data"].sheet_state == "veryHidden" and workbook["Punch Clock data"].protection.sheet
     text = " ".join(str(c) for sheet in workbook.worksheets for row in sheet.iter_rows(values_only=True) for c in row if c)
     assert "Ann Painter" in text and "Cal Painter" in text and "Bea Boss" in text
     assert "Dee Solo" not in text and "Eli Blank" not in text

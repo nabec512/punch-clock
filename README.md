@@ -313,7 +313,8 @@ python -m venv .venv
 | `jibble_export.py` | Reads the export by its labels and cross-checks the sheets |
 | `assignments.py` | Decides who reviews whom |
 | `pdf_report.py` | Lays out the printable PDFs |
-| `review_workbook.py` | Writes each supervisor's spreadsheet |
+| `review_workbook.py` | Writes each supervisor's spreadsheet, with a very hidden sheet recording who each row is |
+| `approved_hours.py` | Reads a returned spreadsheet and works its approved hours out again, listing anything that stops them being used |
 | `validation_report.py` | Writes the validation file |
 | `reports.py` | Makes the week's reports and manages its folder |
 | `updater.py` | Finds, downloads and installs newer releases |
