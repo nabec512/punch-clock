@@ -21,20 +21,24 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 - A file that isn't a review file, whose rows were moved, or that was made before 0.11.0, is refused.
 - Checked with real Excel: a file edited and saved in Excel, with an adjustment, typed hours and Reviewed set, reads back with the same totals Excel shows and no problems.
 
+**0.11.0: agency hours every two weeks** (`agency_hours.py`, `agency_workbook.py`, the **Make the agency hours...** button).
+- Modelled on the spreadsheet accounting already sends: the agency's company name and email (TO), the company sending the hours (FROM), and a row per person. A short table gives each person's two-week regular hours, overtime hours and lunch, and a detail by week below it gives each week's regular hours, overtime hours and lunch days, with weeks labelled by their Monday. Accounting found that clearer than one wide row per person. It's an Excel file, as accounting uses Excel.
+- Accounting picks one folder, and every review file in it or below it from the last pay period that has ended is read again. This settles where approved files are kept for agencies: anywhere, as long as both weeks are in one folder. A file found twice is refused, as is a file with agency staff whose hours can't be used yet. Supervisors with a file for only one week, anyone not marked Reviewed, and anyone not linked are listed when it's done.
+- One file per agency for each company sending hours. That's set per organization (`agencies_paid_by`), not by where people punch, because one company pays the agency staff of several organizations.
+- Lunch is charged per scheduled day worked, at `agency_pay.lunch_per_day`, which can change from year to year. Weekend hours on a day off have no lunch. Lunch is optional for employees, so accounting changes the lunch days before sending. The amount and the totals are formulas, checked in real Excel.
+- The cycle is counted in two-week steps from `agency_pay.period_starts`. Each period is processed on the Wednesday after it ends. The real starting Monday is only in the private settings file.
+
 ## Waiting on
 
 - **The PowerPay import layout.** One example import file or template, the pay codes for regular and overtime hours, and how dates and the pay period are written. The import file can't be written until this is known.
-- **The agency pay cycle.** Agencies share one two-week cycle, processed every second Wednesday. The plan is to count from one known period in the settings file, so it needs a real date, and confirmation that each period is two Monday-to-Sunday weeks.
 
 ## Next
 
 1. **Gather a week's returned files.** Find every returned review spreadsheet for one week from each Jibble organization, check that none is missing or included twice, and read them all with `approved_hours`. Corrections made on paper are typed into the spreadsheet first, so there's one kind of input. This needs the decision on where approved files are kept.
 2. **Weekly payroll files.** A new button takes one week's approved files from every Jibble organization, checks they're all there and all the same week, and writes one import file per payroll. An employee with no link stops it, and agency employees are left out. A short summary gives the totals per payroll, so accounting can check them.
-3. **Agency reports, every two weeks.** A separate button reads the approved files for both weeks of the agency pay period and writes one report per agency: each person's name, regular hours, overtime hours and the period's dates. Each total is the sum of the two weeks' own figures, as overtime is worked out a week at a time. Nothing is cached between weeks: the approved files are read again, so a correction made after the first week is included.
-4. **Run alongside the manual process** for a few weeks, and compare the results with what accounting entered, before relying on it.
+3. **Run alongside the manual process** for a few weeks, and compare the results with what accounting entered, before relying on it.
 
 ## Still to decide
 
-- Where approved supervisor files are kept, so that every PC can find both weeks of an agency period.
-- Whether agency reports are PDFs, Excel files or both.
+- Where approved supervisor files are kept for payroll. The agency step only needs both weeks in one folder.
 - How holidays, vacation and sick days for hourly staff are handled: they aren't in Jibble's punches.

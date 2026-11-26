@@ -541,16 +541,27 @@ PAYROLL_LINKS = {
 }
 
 
-def links(employees, payrolls='["Main Payroll", "Second Payroll"]', agencies='["Temp Staffing Inc."]'):
-    top = "".join(f', "{key}": {value}' for key, value in (("payrolls", payrolls), ("agencies", agencies)) if value)
-    organization = '"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {}, "employees": %s}' % employees
+TEMP_STAFFING = '{"Temp Staffing Inc.": {"legal_name": "Temp Staffing Holdings", "contact": "hours@example.com"}}'
+PAY = '{"lunch_per_day": 3.0, "period_starts": "2026-03-02"}'
+
+
+def links(
+    employees, payrolls='["Main Payroll", "Second Payroll"]', agencies=TEMP_STAFFING, pay=PAY, paid_by='"Org Inc."'
+):
+    top = "".join(
+        f', "{key}": {value}' for key, value in (("payrolls", payrolls), ("agencies", agencies), ("agency_pay", pay)) if value
+    )
+    sender = f', "agencies_paid_by": {paid_by}' if paid_by else ""
+    organization = (
+        '"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {}, "employees": %s%s}' % (employees, sender)
+    )
     return '{"organizations": {%s}%s}' % (organization, top)
 
 
 def test_who_pays_is_optional():
     share({"Assembly": "Dana Smith"})
     loaded = settings.load()
-    assert not loaded.links_pay and loaded.payrolls == () and loaded.agencies == ()
+    assert not loaded.links_pay and loaded.payrolls == () and loaded.agencies == {} and loaded.agency_pay is None
     assert loaded.organization(COMPANY).pay_link("AL-1") is None
 
 
@@ -567,8 +578,13 @@ def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
     )
     loaded = settings.load()
     assert loaded.links_pay
-    assert loaded.payrolls == ("Main Payroll", "Second Payroll") and loaded.agencies == ("Temp Staffing Inc.",)
+    assert loaded.payrolls == ("Main Payroll", "Second Payroll")
+    assert loaded.agencies == {
+        "Temp Staffing Inc.": settings.Agency("Temp Staffing Inc.", "Temp Staffing Inc. Holdings", "hours@example.com")
+    }
+    assert loaded.agency_pay == settings.AgencyPay(3.00, date(2026, 3, 2))
     organization = loaded.organization(COMPANY)
+    assert organization.agencies_paid_by == COMPANY
     # Spelled as listed at the top, whatever the capitals, and the number kept as written.
     assert organization.pay_link("AL-1") == settings.PayLink("LEE, AVERY", "Main Payroll", "0012")
     assert organization.pay_link("so-1") == settings.PayLink("Sam Ortiz", agency="Temp Staffing Inc.")
@@ -594,7 +610,23 @@ def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
         (links('{"A-1": "Main Payroll"}'), "Org, employees, A-1 should be a list of settings"),
         (links('{"A-1": {"name": "Ann", "payroll": "Main Payroll", "employee_number": "1"}}'), '"employee_number" isn\'t a setting'),
         (links("{}", payrolls='"Main Payroll"'), "payrolls should list names in quotes"),
-        (links("{}", agencies='["Temp Staffing Inc.", ""]'), "agencies should list names in quotes"),
+        (links("{}", agencies='["Temp Staffing Inc."]'), "agencies needs each agency's legal_name and contact"),
+        (links("{}", agencies='{"Temp": {"legal_name": "Temp Ltd."}}'), 'agencies, Temp needs "contact"'),
+        (links("{}", agencies='{"Temp": {"legal_name": " ", "contact": "a@example.com"}}'), "legal_name must be the company name"),
+        (links("{}", agencies='{"Temp": {"legal_name": "Temp Ltd.", "contact": "Temp office"}}'), "contact must be the email address"),
+        (links("{}", agencies='{"Temp": {"legal_name": "T", "contact": "a@example.com", "phone": "1"}}'), '"phone" isn\'t a setting'),
+        (links("{}", pay=""), 'The file lists agencies, so it needs "agency_pay"'),
+        (links("{}", pay='{"lunch_per_day": "3.00", "period_starts": "2026-03-02"}'), "lunch_per_day must be the dollars"),
+        (links("{}", pay='{"lunch_per_day": 3.005, "period_starts": "2026-03-02"}'), "lunch_per_day must be the dollars"),
+        (links("{}", pay='{"lunch_per_day": -1, "period_starts": "2026-03-02"}'), "lunch_per_day must be the dollars"),
+        (links("{}", pay='{"lunch_per_day": 3.0, "period_starts": "2026-03-03"}'), "period_starts must be the Monday"),
+        (links("{}", pay='{"lunch_per_day": 3.0, "period_starts": "March 2"}'), "period_starts must be the Monday"),
+        (links("{}", pay='{"lunch_per_day": 3.0}'), 'agency_pay needs "period_starts"'),
+        (
+            links('{"A-1": {"name": "Ann", "agency": "Temp Staffing Inc."}}', paid_by=""),
+            'Org has employees from an agency, so it needs "agencies_paid_by"',
+        ),
+        (links("{}", paid_by="7"), "agencies_paid_by must be a company name in quotes"),
         (links("{}", payrolls='["Main Payroll", "main  payroll"]'), '"main  payroll" is listed twice'),
         ('{"organizations": {}, "payroll": []}', '"payroll" isn\'t a setting'),
         (section(extra=', "employee": {}'), '"employee" isn\'t a setting'),

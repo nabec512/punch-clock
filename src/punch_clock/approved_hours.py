@@ -43,6 +43,7 @@ class ApprovedDay:
     adjustment: int  # minutes the supervisor added, or took off if negative
     typed: bool  # the punches were incomplete, so the supervisor typed the hours
     comment: str
+    full_minutes: int = 0  # the scheduled paid hours; zero on a day off, which has no lunch
 
 
 @dataclass(frozen=True)
@@ -247,19 +248,19 @@ def _read_day(sheet, day: _Day, problems: list[str]) -> ApprovedDay:
         else:
             total = _typed_hours(typed, where, problems)
         regular, overtime = _split(total, day.full_minutes)
-        return ApprovedDay(day.day, total, regular, overtime, 0, True, comment)
+        return ApprovedDay(day.day, total, regular, overtime, 0, True, comment, day.full_minutes)
 
     adjustment = _adjustment(adjustment_cell, day.paid or 0, where, problems)
     total = (day.paid or 0) + (adjustment or 0)
     regular, overtime = _split(total, day.full_minutes)
     if adjustment is None:
         # The adjustment can't be used, so neither can the day's hours. They aren't compared either.
-        return ApprovedDay(day.day, None, None, None, 0, False, comment)
+        return ApprovedDay(day.day, None, None, None, 0, False, comment, day.full_minutes)
     # Without punches or an adjustment, the cells are blank rather than zero.
     blank = not day.from_punches and _blank(adjustment_cell)
     for label, minutes in ((REGULAR, regular), (OVERTIME, overtime), (TOTAL, total)):
         _compare(sheet, day.row, label, "" if blank else minutes, where, problems)
-    return ApprovedDay(day.day, total, regular, overtime, adjustment, False, comment)
+    return ApprovedDay(day.day, total, regular, overtime, adjustment, False, comment, day.full_minutes)
 
 
 def _split(total: Optional[int], full_minutes: int) -> tuple[Optional[int], Optional[int]]:

@@ -86,6 +86,24 @@ If that doesn't work, contact Jibble support. Until it's fixed, add their member
 
 To correct a punch or a position, fix it in Jibble, export again, and start from step 1.
 
+## Agency payday
+
+Staffing agencies are paid every two weeks, for two full weeks, Monday to Sunday. On the Wednesday after, accounting sends each agency its people's hours.
+
+1. Save every supervisor's returned Excel file for both weeks somewhere in one folder. Folders inside it are fine, such as one per week.
+2. Choose **Make the agency hours...** and pick that folder.
+3. Punch Clock reads every review file in it from the last pay period that has ended, and writes one Excel file per agency into a new `Agency hours` folder there. An agency whose people are sent by two companies gets a file from each.
+4. Check each file. Lunch is charged for each scheduled day worked, at the rate in the settings file. For anyone who didn't buy lunch, change their **Lunch days** under **Detail by week**, or type over their lunch, and the totals follow. Then send it to the agency's email at the top.
+
+Each file starts with a short table of the agency's people, by the name the agency knows them by, with their regular and overtime hours for the two weeks and their lunch. Below it, **Detail by week** shows each week's regular hours, overtime hours and lunch days. Hours are decimals, so 7.75 is 7 hours 45 minutes. Each week's figures are the ones its supervisor approved: overtime is worked out a week at a time, so the two weeks are only added together.
+
+The hours are worked out again from each file, as for payroll, so a correction saved in a file after the first week is included. It stops, and makes nothing, if:
+
+- A supervisor's file for a week, or one employee for a week, is in the folder twice, such as the file as sent and the file as returned. Keep only the returned one.
+- A file with agency staff in it has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all.
+
+When it's done, the window lists anyone not marked Reviewed, any supervisor with a file for only one of the two weeks, and anyone the settings file doesn't link to a payroll or an agency, so they can be checked before the files are sent.
+
 ## Who reviews whom
 
 [The settings file](#the-settings-file) says who reviews each department, separately for each organization, so two organizations can each have a `Production` department with different supervisors. A supervisor doesn't need to be in Jibble, and one person can cover several departments, with one PDF and one Excel file for all of them.
@@ -170,8 +188,9 @@ The file has a section for each organization, because organizations can have dep
       "member_departments": { "CD-1": "Receiving" },
       "employees": {
         "AB-1": { "name": "BROWN, ALEX", "payroll": "Example Payroll", "number": "1042" },
-        "CD-1": { "name": "Casey Diaz", "agency": "Example Staffing Inc." }
-      }
+        "CD-1": { "name": "Casey Diaz", "agency": "Example Staffing" }
+      },
+      "agencies_paid_by": "Example Co. Inc."
     },
     "Second Example Ltd.": {
       "supervisors": { "Assembly": "Morgan Blake" },
@@ -180,7 +199,10 @@ The file has a section for each organization, because organizations can have dep
     }
   },
   "payrolls": ["Example Payroll", "Second Payroll"],
-  "agencies": ["Example Staffing Inc."]
+  "agencies": {
+    "Example Staffing": { "legal_name": "1234-5678 Example Inc.", "contact": "hours@example.com" }
+  },
+  "agency_pay": { "lunch_per_day": 3.00, "period_starts": "2026-03-02" }
 }
 ```
 
@@ -197,7 +219,10 @@ The file has a section for each organization, because organizations can have dep
 | `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
 | `weekend` | Optional, on a department or member schedule. Changes the organization's weekend hours one day at a time. Above, Shipping starts at 4:30 AM on Saturday and keeps the organization's Sunday hours. A member schedule replaces the department's, so it starts again from the organization's weekend hours |
 | `employees` | Optional. Who pays each employee, by Jibble member code. See [Who pays each employee](#who-pays-each-employee). Needs version 0.11.0 |
-| `payrolls`, `agencies` | Optional, beside `organizations` at the top. Every payroll and staffing agency named under `employees`, each written once |
+| `agencies_paid_by` | The company that sends this organization's agency staff hours to their agency, as it should appear after FROM. Needed once the organization has anyone with an agency under `employees` |
+| `payrolls` | Optional, beside `organizations` at the top. Every payroll named under `employees`, each written once |
+| `agencies` | Optional, beside `organizations` at the top. Every staffing agency named under `employees`, each written once, with the `legal_name` and the `contact` email its hours are sent to |
+| `agency_pay` | Needed beside `agencies`. `lunch_per_day` is the dollars charged for each scheduled day an agency employee works, as a number. `period_starts` is the Monday any agency pay period started, as `"year-month-day"`. Every period is two weeks from there, so it only changes if the cycle does. See [Agency payday](#agency-payday) |
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.
 
@@ -208,9 +233,9 @@ Some employees are on a different company's books from the organization they pun
 - **Through a payroll:** `name`, `payroll` and `number`. The number is their employee number in that payroll, in quotes. Numbers only need to be unique within a payroll, but one number can't be given to two people in the same payroll anywhere in the file.
 - **Through an agency:** `name` and `agency`. The agency is sent their hours and bills for them.
 
-`name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one.
+`name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one. Each agency is listed with where its hours go, and an organization with anyone from an agency says, in `agencies_paid_by`, which company sends them. That doesn't depend on where people punch: two organizations can name the same company.
 
-Once anyone is listed, the window and the Validation file name everyone in the reports who isn't, so a new hire can be added before payday. Nothing uses these links to pay anyone yet. They're the first part of preparing hours for the payroll and the agencies.
+Once anyone is listed, the window and the Validation file name everyone in the reports who isn't, so a new hire can be added before payday. Agency staff are paid from these links on [Agency payday](#agency-payday). Payroll doesn't use them yet.
 
 Set `minimum_version` to `"0.11.0"` when adding them, as older versions refuse a file with them.
 

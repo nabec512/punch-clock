@@ -31,11 +31,22 @@ class Person:
     punches: list[tuple] = field(default_factory=list)
 
 
-def organization(supervisors=None, departments=None, members=None, weekend=None, moved=None, employees=None) -> dict:
+AGENCY_PAY = {"lunch_per_day": 3.00, "period_starts": WEEK_START.isoformat()}
+
+
+def agency_details(name: str) -> dict:
+    """Fictional details for an agency in the settings file."""
+    return {"legal_name": f"{name} Holdings", "contact": "hours@example.com"}
+
+
+def organization(
+    supervisors=None, departments=None, members=None, weekend=None, moved=None, employees=None, paid_by=None
+) -> dict:
     """One organization's section of the settings file.
 
     ``weekend`` is its hours for days off, by day name. ``moved`` is member_departments: a department
-    for each member code, whatever their Jibble position. ``employees`` says who pays each member code.
+    for each member code, whatever their Jibble position. ``employees`` says who pays each member code,
+    and ``paid_by`` is the company that sends its agency staff hours to their agency.
     """
     section = {"supervisors": supervisors or {}, "department_schedules": departments or {}, "member_schedules": members or {}}
     if weekend is not None:
@@ -44,20 +55,30 @@ def organization(supervisors=None, departments=None, members=None, weekend=None,
         section["member_departments"] = moved
     if employees is not None:
         section["employees"] = employees
+    if paid_by is not None:
+        section["agencies_paid_by"] = paid_by
     return section
 
 
 def write_settings(
     path, supervisors=None, departments=None, members=None, others=None, weekend=None, moved=None,
-    employees=None, payrolls=None, agencies=None,
+    employees=None, payrolls=None, agencies=None, agency_pay=None,
 ) -> None:
-    """A settings file like the real one, for COMPANY plus any ``others`` by name."""
-    section = organization(supervisors, departments, members, weekend, moved, employees)
+    """A settings file like the real one, for COMPANY plus any ``others`` by name.
+
+    ``agencies`` can be a list of names, given fictional details. COMPANY's agency staff are then sent
+    from COMPANY, and lunch and the pay period are AGENCY_PAY unless ``agency_pay`` says otherwise.
+    """
+    paid_by = COMPANY if any("agency" in link for link in (employees or {}).values()) else None
+    section = organization(supervisors, departments, members, weekend, moved, employees, paid_by)
     settings = {"organizations": {COMPANY: section, **(others or {})}}
     if payrolls is not None:
         settings["payrolls"] = payrolls
     if agencies is not None:
+        if isinstance(agencies, list):
+            agencies = {name: agency_details(name) for name in agencies}
         settings["agencies"] = agencies
+        settings["agency_pay"] = agency_pay or AGENCY_PAY
     with open(path, "w", encoding="utf-8") as file:
         json.dump(settings, file, ensure_ascii=False)
 

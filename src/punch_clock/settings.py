@@ -16,7 +16,10 @@ same file, so it can also name the oldest version of the app allowed to use it.
 It also says who pays each employee: a payroll, with their employee number there, or a staffing
 agency. That follows the company on the books, not the organization they punch in, so each
 employee is linked one by one. The payrolls and agencies are listed once at the top, so that a
-misspelled one is caught instead of becoming a payroll of its own.
+misspelled one is caught instead of becoming a payroll of its own. Each agency is listed with the
+company name and email its hours are sent to, and ``agency_pay`` holds the lunch charged per day
+and the start of one two-week agency pay period. Each organization with agency staff says which
+company sends those people's hours to the agency.
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +42,9 @@ DAY_LIST = "Mon, Tue, Wed, Thu, Fri, Sat or Sun"
 MINIMUM_VERSION = "minimum_version"
 PAYROLLS = "payrolls"
 AGENCIES = "agencies"
+AGENCY_PAY = "agency_pay"
+AGENCIES_PAID_BY = "agencies_paid_by"
+PERIOD_DAYS = 14  # agency staff are paid every two weeks
 ORGANIZATION_SECTIONS = ("supervisors", "department_schedules", "member_schedules")
 
 
@@ -53,6 +59,27 @@ class PayLink:
 
 
 @dataclass(frozen=True)
+class Agency:
+    name: str  # as listed in the settings file, and as each employee's link spells it
+    legal_name: str  # the company the hours are sent to
+    contact: str  # the email address the hours are sent to
+
+
+@dataclass(frozen=True)
+class AgencyPay:
+    lunch_per_day: float  # dollars charged for each day with lunch
+    period_starts: date  # the Monday one agency pay period starts; each lasts PERIOD_DAYS
+
+    def period_before(self, day: date) -> date:
+        """The Monday starting the latest pay period that has ended before ``day``."""
+        current = self.period_starts + timedelta(days=(day - self.period_starts).days // PERIOD_DAYS * PERIOD_DAYS)
+        return current - timedelta(days=PERIOD_DAYS)
+
+    def starts_period(self, day: date) -> bool:
+        return (day - self.period_starts).days % PERIOD_DAYS == 0
+
+
+@dataclass(frozen=True)
 class Organization:
     name: str  # as written in the settings file
     supervisors: dict[str, str]  # a blank name means the department has none
@@ -62,6 +89,7 @@ class Organization:
     # Spelled as in supervisors or department_schedules.
     member_departments: dict[str, str] = field(default_factory=dict)
     employees: dict[str, PayLink] = field(default_factory=dict)  # by _key of the member code
+    agencies_paid_by: str = ""  # the company that sends this organization's agency staff hours to their agency
 
     def schedule_for(self, code: str, department: str) -> Optional[Schedule]:
         return self.member_schedules.get(_key(code)) or self.department_schedules.get(_key(department))
@@ -76,7 +104,8 @@ class Settings:
     path: Path  # the settings file, for messages
     note: str = ""  # set when these came from the copy on this PC
     payrolls: tuple[str, ...] = ()
-    agencies: tuple[str, ...] = ()
+    agencies: dict[str, Agency] = field(default_factory=dict)  # by name, as listed
+    agency_pay: Optional[AgencyPay] = None  # set whenever any agency is listed
 
     @property
     def links_pay(self) -> bool:
@@ -241,7 +270,8 @@ def _organization(
     name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], str]
 ) -> Organization:
     entry = _known(
-        entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments", "employees"), may_be_empty=True
+        entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments", "employees", AGENCIES_PAID_BY),
+        may_be_empty=True,
     )
     supervisors = _section(entry["supervisors"], f"{name}, supervisors")
     if not all(isinstance(person, str) for person in supervisors.values()):
@@ -250,13 +280,23 @@ def _organization(
     departments = _section(entry["department_schedules"], f"{name}, department_schedules")
     members = _section(entry["member_schedules"], f"{name}, member_schedules")
     known = {_key(department): department.strip() for department in (*departments, *supervisors)}
+    employees = _pay_links(entry.get("employees", {}), f"{name}, employees", payrolls, agencies, numbers)
+    paid_by = entry.get(AGENCIES_PAID_BY)
+    if paid_by is not None and (not isinstance(paid_by, str) or not paid_by.strip()):
+        raise LayoutMistake(f"{name}: {AGENCIES_PAID_BY} must be a company name in quotes.")
+    if paid_by is None and any(link.agency for link in employees.values()):
+        raise LayoutMistake(
+            f'{name} has employees from an agency, so it needs "{AGENCIES_PAID_BY}": the name of the company that '
+            "sends their hours to the agency, in quotes."
+        )
     return Organization(
         name,
         {department.strip(): person for department, person in supervisors.items()},
         {_key(department): _schedule(hours, f"{name}, {department.strip()}", weekend) for department, hours in departments.items()},
         {_key(code): _schedule(hours, f"{name}, {code.strip()}", weekend) for code, hours in members.items()},
         _member_departments(entry.get("member_departments", {}), f"{name}, member_departments", known),
-        _pay_links(entry.get("employees", {}), f"{name}, employees", payrolls, agencies, numbers),
+        employees,
+        " ".join(paid_by.split()) if paid_by else "",
     )
 
 
@@ -270,6 +310,57 @@ def _names(value: object, section: str) -> dict[str, str]:
             raise LayoutMistake(f'{section}: "{name.strip()}" is listed twice.')
         names[organization_key(name)] = " ".join(name.split())
     return names
+
+
+def _text_setting(entry: dict, setting: str, where: str, what: str) -> str:
+    value = entry[setting]
+    if not isinstance(value, str) or not value.strip():
+        raise LayoutMistake(f"{where}: {setting} must be {what} in quotes.")
+    return " ".join(value.split())
+
+
+def _agencies(value: object) -> dict[str, Agency]:
+    """The agencies listed at the top of the file, by organization_key, each with where its hours are sent."""
+    agencies: dict[str, Agency] = {}
+    if isinstance(value, list):
+        raise LayoutMistake(
+            f'{AGENCIES} needs each agency\'s legal_name and contact, like "{AGENCIES}": '
+            '{ "Agency": { "legal_name": "Agency Inc.", "contact": "name@example.com" } }'
+        )
+    for name, entry in _section(value, AGENCIES).items():
+        if not name.strip():
+            raise LayoutMistake(f"{AGENCIES}: each agency needs a name.")
+        where = f"{AGENCIES}, {name.strip()}"
+        entry = _known(entry, where, ("legal_name", "contact"))
+        legal_name = _text_setting(entry, "legal_name", where, "the company name their hours are sent to")
+        contact = _text_setting(entry, "contact", where, "the email address their hours are sent to")
+        if " " in contact or "@" not in contact:
+            raise LayoutMistake(f'{where}: contact must be the email address their hours are sent to, like "name@example.com".')
+        agencies[organization_key(name)] = Agency(" ".join(name.split()), legal_name, contact)
+    return agencies
+
+
+def _agency_pay(value: object) -> AgencyPay:
+    entry = _known(value, AGENCY_PAY, ("lunch_per_day", "period_starts"))
+    lunch = entry["lunch_per_day"]
+    if (
+        isinstance(lunch, bool) or not isinstance(lunch, (int, float))
+        or lunch < 0 or abs(lunch * 100 - round(lunch * 100)) > 1e-6
+    ):
+        raise LayoutMistake(
+            f"{AGENCY_PAY}: lunch_per_day must be the dollars charged for each day's lunch, as a number without "
+            "quotes or a $ sign, like 3.00."
+        )
+    try:
+        starts = date.fromisoformat(entry["period_starts"])
+    except (TypeError, ValueError):
+        starts = None
+    if starts is None or starts.weekday() != 0:
+        raise LayoutMistake(
+            f"{AGENCY_PAY}: period_starts must be the Monday any agency pay period started, in quotes and written "
+            'year-month-day, like "2026-03-02". Every period is two weeks, Monday to Sunday, counted from there.'
+        )
+    return AgencyPay(round(float(lunch), 2), starts)
 
 
 def _listed(value: object, where: str, listed: dict[str, str], section: str) -> str:
@@ -378,15 +469,23 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
             "It's laid out the old way, for a single organization. Put each organization's supervisors, "
             "department_schedules and member_schedules in a section of its own under organizations."
         )
-    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES))
+    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY))
     payrolls = _names(settings.get(PAYROLLS, []), PAYROLLS)
-    agencies = _names(settings.get(AGENCIES, []), AGENCIES)
+    agency_list = _agencies(settings.get(AGENCIES, {}))
+    agencies = {key: agency.name for key, agency in agency_list.items()}
+    if agency_list and AGENCY_PAY not in settings:
+        raise LayoutMistake(
+            f'The file lists agencies, so it needs "{AGENCY_PAY}" beside them, with lunch_per_day and period_starts.'
+        )
+    agency_pay = _agency_pay(settings[AGENCY_PAY]) if AGENCY_PAY in settings else None
     numbers: dict[tuple[str, int], str] = {}
     sections = _section(settings["organizations"], "organizations")
     organizations = {
         organization_key(name): _organization(name, entry, payrolls, agencies, numbers) for name, entry in sections.items()
     }
-    return Settings(organizations, path, note, tuple(payrolls.values()), tuple(agencies.values()))
+    return Settings(
+        organizations, path, note, tuple(payrolls.values()), {a.name: a for a in agency_list.values()}, agency_pay
+    )
 
 
 def _checked(data: bytes, path: Path) -> Settings:
