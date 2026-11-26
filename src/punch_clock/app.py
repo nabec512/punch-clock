@@ -20,6 +20,7 @@ from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
 POLL_MS = 100  # how often the window looks for background work to have finished
+FONT_SIZE = 10  # points; Windows' usual 9 is hard to read for many of the people using the app
 
 
 def _employees(count: int) -> str:
@@ -297,14 +298,31 @@ def _offer_update(root, status, buttons: Sequence, is_busy: Callable[[], bool]) 
     _in_background(root, updater.find_update, checked)
 
 
+def _style_window(root) -> None:
+    """Larger text and roomier buttons throughout the window, and Enter presses the button with focus."""
+    from tkinter import font, ttk
+
+    for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkTooltipFont"):
+        font.nametofont(name).configure(size=FONT_SIZE)
+    heading = font.nametofont("TkDefaultFont").copy()
+    heading.configure(weight="bold")
+    root.heading_font = heading  # Tk forgets a font once Python lets go of it
+    style = ttk.Style(root)
+    style.configure("TButton", padding=(12, 8))
+    style.configure("Heading.TLabel", font=heading)
+    style.configure("Note.TLabel", foreground="#444444")
+    root.bind_class("TButton", "<Return>", lambda event: event.widget.invoke())
+
+
 def run_window() -> int:
     import tkinter as tk
     from tkinter import ttk
 
     root = tk.Tk()
     root.title(f"{APP_NAME} {__version__}")
-    root.minsize(520, 500)
-    frame = ttk.Frame(root, padding=16)
+    _style_window(root)
+    root.minsize(640, 620)
+    frame = ttk.Frame(root, padding=20)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(7, weight=1)
@@ -433,26 +451,39 @@ def run_window() -> int:
 
         _in_background(root, settings.load, loaded)
 
-    ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
+    ttk.Label(frame, text="1. When you have this week's file from Jibble:", style="Heading.TLabel").grid(
+        row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
-    process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
-    ttk.Label(frame, text="When the supervisors have sent back last week's files:").grid(row=2, column=0, sticky="w")
+    process_button.grid(row=1, column=0, sticky="ew", pady=(6, 18))
+    ttk.Label(frame, text="2. When the supervisors have sent back last week's files:", style="Heading.TLabel").grid(
+        row=2, column=0, sticky="w")
     payroll_frame = ttk.Frame(frame)
-    payroll_frame.grid(row=3, column=0, sticky="ew", pady=(4, 12))
-    ttk.Label(frame, text="On agency payday, for the last two weeks:").grid(row=4, column=0, sticky="w")
+    payroll_frame.grid(row=3, column=0, sticky="ew", pady=(6, 18))
+    ttk.Label(frame, text="3. On agency payday, for the last two weeks:", style="Heading.TLabel").grid(
+        row=4, column=0, sticky="w")
     agency_button = ttk.Button(
         frame,
         text="Make the agency hours...",
         command=from_returned_files("the last two weeks", "agency hours", make_agency_hours, agency_summary),
     )
-    agency_button.grid(row=5, column=0, sticky="ew", pady=(4, 12))
+    agency_button.grid(row=5, column=0, sticky="ew", pady=(6, 18))
     progress = ttk.Progressbar(frame, mode="indeterminate")  # moves while the reports are being made
-    progress.grid(row=6, column=0, sticky="ew", pady=(0, 12))
+    progress.grid(row=6, column=0, sticky="ew", pady=(0, 12), ipady=4)
     progress.grid_remove()
-    ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=7, column=0, sticky="nsew")
-    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=8, column=0, sticky="w", pady=(12, 0))
+    status_label = ttk.Label(frame, textvariable=status, wraplength=600, justify="left", anchor="nw")
+    status_label.grid(row=7, column=0, sticky="nsew")
+    ttk.Separator(frame).grid(row=8, column=0, sticky="ew", pady=(12, 0))
+    settings_label = ttk.Label(frame, textvariable=settings_location, wraplength=600, justify="left", style="Note.TLabel")
+    settings_label.grid(row=9, column=0, sticky="w", pady=(10, 0))
+
+    def wrap_text(event) -> None:  # long messages fill the window's width, however wide it is
+        width = max(event.width - 2 * 20, 200)
+        status_label.configure(wraplength=width)
+        settings_label.configure(wraplength=width)
+
+    frame.bind("<Configure>", wrap_text)
     bottom = ttk.Frame(frame)
-    bottom.grid(row=9, column=0, sticky="ew", pady=(8, 0))
+    bottom.grid(row=10, column=0, sticky="ew", pady=(10, 0))
     settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
     settings_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
@@ -461,6 +492,7 @@ def run_window() -> int:
     controls: list = []  # every button that's disabled while something is being made, kept up to date
     show_payroll_buttons([])
     read_payroll_runs()
+    process_button.focus_set()
     if updater.is_packaged():
         _offer_update(root, status, controls, lambda: busy)
     root.protocol("WM_DELETE_WINDOW", on_close)
