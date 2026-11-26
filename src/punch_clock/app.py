@@ -11,6 +11,7 @@ from typing import Callable, Optional, Sequence
 
 from punch_clock import __version__, settings, updater
 from punch_clock.agency_hours import AgencyResult, make_agency_hours, period_label
+from punch_clock.archive import ReceiveResult, receive_files
 from punch_clock.payroll_files import PayrollResult, hours_text, make_payroll_files
 from punch_clock.returned_files import week_label
 from punch_clock.assignments import departments_without_supervisor
@@ -100,6 +101,20 @@ def process_summary(result: ProcessResult) -> str:
         lines += ["", f"1 total doesn't match Jibble. Please check the Validation file.{reason}"]
     elif export.review_count:
         lines += ["", f"{export.review_count} totals don't match Jibble. Please check the Validation file.{reason}"]
+    return "\n".join(lines)
+
+
+def receive_summary(result: ReceiveResult) -> str:
+    kept = [r for r in result.received if not r.unchanged]
+    same = [r for r in result.received if r.unchanged]
+    lines = [f"Received {_files(len(kept))}:" if kept else "Nothing new was received."]
+    for item in kept:
+        replaced = ", replacing the one received before" if item.replaced else ""
+        lines.append(f"  {item.path.name}{replaced}")
+    if same:
+        lines += ["", "Already received, and unchanged:", *(f"  {item.path.name}" for item in same)]
+    for warning in result.warnings:
+        lines += ["", warning]
     return "\n".join(lines)
 
 
@@ -196,6 +211,17 @@ def process_in_window(root, source: Path, working: Callable[[bool], None], finis
 def payroll_button_names(runs: Sequence[str]) -> list[tuple[str, Optional[str]]]:
     """Each payroll button's text and the run it makes, from the settings file's payroll_runs, or one for everyone."""
     return [(f"{run} Payroll Files...", run) for run in runs] or [("Make the payroll files...", None)]
+
+
+def choose_returned_files(parent) -> list[Path]:
+    from tkinter import filedialog
+
+    chosen = filedialog.askopenfilenames(
+        parent=parent,
+        title="Choose the Excel files the supervisors sent back",
+        filetypes=[("Excel file", "*.xlsx *.xlsm")],
+    )
+    return [Path(path) for path in chosen]
 
 
 def choose_returned_folder(parent, weeks: str) -> Optional[Path]:
@@ -321,14 +347,17 @@ def run_window() -> int:
     root = tk.Tk()
     root.title(f"{APP_NAME} {__version__}")
     _style_window(root)
-    root.minsize(640, 620)
+    root.minsize(640, 700)
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(7, weight=1)
+    frame.rowconfigure(9, weight=1)
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
     settings_location = tk.StringVar(value=f"Settings file: {settings.file_path()}")
     last_folder: dict[str, Path] = {}
+    # Whether the settings file names an accounting folder, so payroll and agency files read from it, with no folder
+    # to choose. Known once the settings file has been read when the window opens.
+    accounting = {"folder": None}
     busy = False
     making_reports = False
 
@@ -384,14 +413,16 @@ def run_window() -> int:
         def run() -> None:
             nonlocal busy
             busy = True
-            try:
-                folder = choose_returned_folder(root, weeks)
-            except BaseException:
-                busy = False  # or an update would never be offered
-                raise
-            if not folder:
-                busy = False
-                return
+            folder = None
+            if accounting["folder"] is None:
+                try:
+                    folder = choose_returned_folder(root, weeks)
+                except BaseException:
+                    busy = False  # or an update would never be offered
+                    raise
+                if not folder:
+                    busy = False
+                    return
             before = status.get()
             status.set(f"Reading the supervisors' files and making the {making}...")
 
@@ -412,6 +443,36 @@ def run_window() -> int:
             _in_background(root, lambda: make(folder), done)
 
         return run
+
+    def on_receive() -> None:
+        nonlocal busy
+        busy = True
+        try:
+            paths = choose_returned_files(root)
+        except BaseException:
+            busy = False
+            raise
+        if not paths:
+            busy = False
+            return
+        before = status.get()
+        status.set(f"Checking and receiving {_files(len(paths))}...")
+
+        def done(result: Optional[ReceiveResult], error: Optional[Exception]) -> None:
+            nonlocal busy
+            busy = False
+            show_working(False)
+            if error:
+                _show_error(root, error)
+                status.set(before)
+                return
+            status.set(receive_summary(result))
+            if result.received:
+                last_folder["path"] = result.received[0].path.parent
+                open_button.state(["!disabled"])
+
+        show_working(True)
+        _in_background(root, lambda: receive_files(paths), done)
 
     def on_close() -> None:
         if not making_reports:  # closing part-way would leave a half-made folder behind
@@ -439,7 +500,7 @@ def run_window() -> int:
             if making_reports:
                 button.state(["disabled"])
             buttons.append(button)
-        controls[:] = [process_button, *buttons, agency_button, settings_button]
+        controls[:] = [process_button, receive_button, *buttons, agency_button, settings_button]
 
     def read_payroll_runs() -> None:
         """Once when the window opens, and when the settings file changes. If it can't be read, the one button
@@ -447,6 +508,7 @@ def run_window() -> int:
 
         def loaded(current: Optional[settings.Settings], _error) -> None:
             if current is not None and root.winfo_exists():
+                accounting["folder"] = current.accounting_folder
                 show_payroll_buttons(list(current.payroll_runs))
 
         _in_background(root, settings.load, loaded)
@@ -455,26 +517,30 @@ def run_window() -> int:
         row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
     process_button.grid(row=1, column=0, sticky="ew", pady=(6, 18))
-    ttk.Label(frame, text="2. When the supervisors have sent back last week's files:", style="Heading.TLabel").grid(
+    ttk.Label(frame, text="2. When a supervisor sends back their Excel file:", style="Heading.TLabel").grid(
         row=2, column=0, sticky="w")
-    payroll_frame = ttk.Frame(frame)
-    payroll_frame.grid(row=3, column=0, sticky="ew", pady=(6, 18))
-    ttk.Label(frame, text="3. On agency payday, for the last two weeks:", style="Heading.TLabel").grid(
+    receive_button = ttk.Button(frame, text="Receive returned files...", command=on_receive)
+    receive_button.grid(row=3, column=0, sticky="ew", pady=(6, 18))
+    ttk.Label(frame, text="3. When every supervisor has sent back last week's file:", style="Heading.TLabel").grid(
         row=4, column=0, sticky="w")
+    payroll_frame = ttk.Frame(frame)
+    payroll_frame.grid(row=5, column=0, sticky="ew", pady=(6, 18))
+    ttk.Label(frame, text="4. On agency payday, for the last two weeks:", style="Heading.TLabel").grid(
+        row=6, column=0, sticky="w")
     agency_button = ttk.Button(
         frame,
         text="Make the agency hours...",
         command=from_returned_files("the last two weeks", "agency hours", make_agency_hours, agency_summary),
     )
-    agency_button.grid(row=5, column=0, sticky="ew", pady=(6, 18))
+    agency_button.grid(row=7, column=0, sticky="ew", pady=(6, 18))
     progress = ttk.Progressbar(frame, mode="indeterminate")  # moves while the reports are being made
-    progress.grid(row=6, column=0, sticky="ew", pady=(0, 12), ipady=4)
+    progress.grid(row=8, column=0, sticky="ew", pady=(0, 12), ipady=4)
     progress.grid_remove()
     status_label = ttk.Label(frame, textvariable=status, wraplength=600, justify="left", anchor="nw")
-    status_label.grid(row=7, column=0, sticky="nsew")
-    ttk.Separator(frame).grid(row=8, column=0, sticky="ew", pady=(12, 0))
+    status_label.grid(row=9, column=0, sticky="nsew")
+    ttk.Separator(frame).grid(row=10, column=0, sticky="ew", pady=(12, 0))
     settings_label = ttk.Label(frame, textvariable=settings_location, wraplength=600, justify="left", style="Note.TLabel")
-    settings_label.grid(row=9, column=0, sticky="w", pady=(10, 0))
+    settings_label.grid(row=11, column=0, sticky="w", pady=(10, 0))
 
     def wrap_text(event) -> None:  # long messages fill the window's width, however wide it is
         width = max(event.width - 2 * 20, 200)
@@ -483,7 +549,7 @@ def run_window() -> int:
 
     frame.bind("<Configure>", wrap_text)
     bottom = ttk.Frame(frame)
-    bottom.grid(row=10, column=0, sticky="ew", pady=(10, 0))
+    bottom.grid(row=12, column=0, sticky="ew", pady=(10, 0))
     settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
     settings_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))

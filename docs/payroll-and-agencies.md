@@ -32,6 +32,8 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 
 **Documented: changing payroll or organization** in the README, under [When someone changes payroll or organization](../README.md#when-someone-changes-payroll-or-organization). Open gap: two payroll buttons can't see each other's files, so someone with hours under both codes in one week isn't caught.
 
+**0.11.0: the accounting folder** (`archive.py`, the **Receive returned files...** button). Settles where approved files are kept: one folder on a share only accounting can open, named by `accounting_folder` in the settings file, where the app files each returned spreadsheet by organization and week, keeps replaced versions in `history`, and logs a fingerprint of each in `receipts.csv`. The payroll and agency steps read only from there and refuse anything changed outside the app. Choosing a week other than the last one is now possible to add, as every week is kept.
+
 ## Waiting on
 
 - **Whether every payroll uses the same earning codes.** One payroll's codes are known: RT (Regular Hours) and OT (Overtime Hours, 1.5x), both paid in hours. They're assumed for every payroll for now and built into `payroll_files.py`. If a payroll turns out to differ, its codes go in the settings file.

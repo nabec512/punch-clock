@@ -25,7 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
-from punch_clock import settings
+from punch_clock import archive, settings
 from punch_clock.approved_hours import ApprovedFile
 from punch_clock.assignments import safe_file_name
 from punch_clock.jibble_export import UnsupportedExport
@@ -199,13 +199,16 @@ def _file_name(payroll: str, start: date) -> str:
     return safe_file_name(f"{payroll} {start}") + ".csv"
 
 
-def make_payroll_files(folder: str | Path, today: Optional[date] = None, run: Optional[str] = None) -> PayrollResult:
-    """Read the last full week before ``today`` from ``folder``, and write each payroll's import file there.
+def make_payroll_files(
+    folder: Optional[str | Path] = None, today: Optional[date] = None, run: Optional[str] = None
+) -> PayrollResult:
+    """Read the last full week before ``today``, and write each payroll's import file.
 
+    With the settings file's accounting folder, the files received there are read and the payroll files are made
+    there. Otherwise every review file in ``folder`` and below it is read, and they're made in ``folder``.
     ``run`` is one of the settings file's payroll_runs: only its organizations' files are read. Without one, every
     organization's are.
     """
-    folder = Path(folder)
     current = settings.load()
     if not current.payrolls:
         raise UnsupportedExport(f"The settings file doesn't list any payrolls yet, so there's no one to pay:\n\n{current.path}")
@@ -216,7 +219,14 @@ def make_payroll_files(folder: str | Path, today: Optional[date] = None, run: Op
     only = set(current.payroll_runs[run]) if run else None
     others = [o.name for key, o in current.organizations.items() if only is not None and key not in only]
     start = last_full_week(today or date.today())
-    files, skipped = read_returned_files(folder, (start,), week_label(start), only, others)
+    if current.accounting_folder is not None:
+        files, skipped = archive.read_archive(current, (start,), week_label(start), only)
+        folder, parent = current.accounting_folder / archive.RETURNED, archive.output_parent(current, archive.PAYROLL)
+    elif folder is None:
+        raise UnsupportedExport("Choose the folder with the supervisors' returned files.")
+    else:
+        folder = parent = Path(folder)
+        files, skipped = read_returned_files(folder, (start,), week_label(start), only, others)
     by_payroll, warnings = collect(files, current, folder, current.payrolls_in(run))
     warnings = skipped + missing_files(files, current, (start,), only) + warnings
     if current.note:
@@ -236,7 +246,7 @@ def make_payroll_files(folder: str | Path, today: Optional[date] = None, run: Op
             )
 
     label = f"{safe_file_name(run)} " if run else ""
-    output = new_folder(folder, f"{FOLDER_PREFIX} {label}{start} to {start + timedelta(days=6)}")
+    output = new_folder(parent, f"{FOLDER_PREFIX} {label}{start} to {start + timedelta(days=6)}")
     summary_name = f"Payroll summary {start}.txt"
     check_output(output.with_name(output.name + ".tmp"), [_file_name(payroll, start) for payroll in paid] + [summary_name])
     building = output.with_name(output.name + ".tmp")

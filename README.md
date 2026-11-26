@@ -81,9 +81,54 @@ If that doesn't work, contact Jibble support. Until it's fixed, add their member
 - Types the total approved hours as `h:mm` in 15-minute steps on any orange row, where the punches are incomplete.
 - Adds comments if needed.
 
-**Step 3: accounting takes over.** Supervisors send their Excel files back to accounting, who make the payroll files from them. Agency staff are paid every two weeks instead: see [Agency payday](#agency-payday).
+**Step 3: accounting takes over.** Supervisors send their Excel files back to accounting. Accounting receives each one with **Receive returned files...** as it arrives (see [The accounting folder](#the-accounting-folder)), then makes the payroll files once they're all in. Agency staff are paid every two weeks instead: see [Agency payday](#agency-payday).
 
 To correct a punch or a position, fix it in Jibble, export again, and start from step 1.
+
+## The accounting folder
+
+The returned spreadsheets hold everyone's hours, and the payroll and agency files hold who is paid what. So they're kept in one folder that Punch Clock looks after, on a share **only accounting staff can open**, such as the accounting server. The settings file says where it is, with `accounting_folder`. Nobody chooses where a file goes, so files can't be misplaced or kept twice.
+
+```text
+<accounting folder>\
+    Returned files\
+        receipts.csv                           one line for every file received
+        Example Co\
+            2026-03-02\                         the week's Monday
+                Example Co. - Avery Lee - 2026-03-02.xlsx
+                Example Co. - Missing supervisor - 2026-03-02.xlsx
+                history\                        earlier versions, replaced by a corrected file
+                    Example Co. - Avery Lee - 2026-03-02 (replaced 2026-03-10 093012).xlsx
+        Second Example Ltd\
+            2026-03-02\
+                ...
+    Payroll files\
+        Payroll files EXAMPLE 2026-03-02 to 2026-03-08\
+    Agency hours\
+        Agency hours 2026-03-02 to 2026-03-15\
+```
+
+Punch Clock creates the organization and week folders itself. Only the top folder needs to exist.
+
+**Receiving a returned file.** When a supervisor sends back their Excel file, save the attachment anywhere, such as Downloads, choose **Receive returned files...**, and pick it. Several can be picked at once. Punch Clock:
+
+1. Reads it, and refuses it if it isn't a review spreadsheet, can't be opened, or has had rows moved. Nothing in a batch is kept unless every file in it can be read.
+2. Files it under its organization and week, named from what's inside it, so a renamed attachment still lands in the right place.
+3. If a file for that supervisor and week was received before, moves the earlier one to `history` and keeps the new one. Receiving the same file twice changes nothing.
+4. Writes a line in `receipts.csv`: when, which Windows user, the organization, supervisor and week, and the file's fingerprint (a SHA-256 checksum).
+5. Lists anything to fix before payday, such as incomplete punches with no hours typed, or someone the settings file doesn't link to a payroll or an agency. Fix it in the spreadsheet, or ask the supervisor to, and receive it again.
+
+**Making payroll and agency files.** With an accounting folder, the payroll and agency buttons don't ask for a folder. They read the files received for the week or pay period, and make their files under `Payroll files` or `Agency hours`. Before using a file, they check its fingerprint against its receipt. A file that was changed in the accounting folder, or put there by hand, stops the run until it's received again through the app, so what's paid is always what was received.
+
+If the accounting folder can't be reached, Punch Clock says so, and receives and makes nothing. It never keeps a copy on the PC instead, which the other PCs couldn't see.
+
+**Setting it up.** Ask IT for a folder on the accounting server that only accounting staff can open, with read and write access for them and nobody else, and covered by the server's backups. Put the settings file there too, as it holds everyone's payroll and employee numbers, and if possible let only the person who maintains it change it. Then add the folder to the settings file, with each `\` written twice:
+
+```json
+"accounting_folder": "\\\\accounting-server\\Punch Clock"
+```
+
+Without `accounting_folder`, **Receive returned files...** explains what to add, and the payroll and agency buttons ask for a folder instead, and read every returned spreadsheet in it, as below.
 
 ## Payroll files
 
@@ -91,9 +136,11 @@ Once every supervisor has sent back last week's Excel file, accounting makes one
 
 Where each company's accounting makes its own payroll files, `payroll_runs` in the settings file gives each one a button, such as **EXAMPLE Payroll Files...**, that reads only its own organizations' files. Without it there's one **Make the payroll files...** button for every organization.
 
-1. Save every returned Excel file for the week somewhere in one folder. Folders inside it are fine, such as one per organization. Corrections made on paper are typed into the Excel file first.
-2. Choose the payroll button and pick that folder.
-3. Punch Clock reads every review file in it from the last full week, Monday to Sunday, and writes one `.csv` file per payroll into a new `Payroll files` folder there, with a summary of everyone's hours.
+1. Receive every returned Excel file for the week, as above. Corrections made on paper are typed into the Excel file first, and the file is received again.
+2. Choose the payroll button.
+3. Punch Clock reads the files received for the last full week, Monday to Sunday, and writes one `.csv` file per payroll into a new folder under `Payroll files`, with a summary of everyone's hours.
+
+   Without an accounting folder, save every returned file for the week in one folder (folders inside it are fine), and pick it when asked. The files are then made in a new `Payroll files` folder there.
 4. In PowerPay, import each file into its payroll's run, with the Employee Timesheet custom import template. **Import first, then key holidays, sick days and vacation:** an import replaces everything already keyed in that run for each person in the file.
 5. Check the totals in PowerPay against the summary.
 
@@ -102,9 +149,10 @@ Each line starts with the person's name, so accounting can tell who it is. Power
 It stops, and makes nothing, if:
 
 - Anyone in the files isn't linked to a payroll or an agency in the settings file. See [Who pays each employee](#who-pays-each-employee).
-- A supervisor's file for the week, or one employee, is in the folder twice. Keep only the returned one.
+- A file in the accounting folder doesn't match its receipt. Receive it again.
+- Without an accounting folder: a supervisor's file for the week, or one employee, is in the folder twice. Keep only the returned one.
 - Someone paid through a payroll has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on an agency person's row doesn't hold up payroll.
-- A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
+- Without an accounting folder: a spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
 When it's done, the window and the summary list any supervisor in the settings file with no file for the week, any organization with no files at all, any payroll with no one's hours that week, and any other spreadsheet in the folder that couldn't be opened.
 
@@ -116,18 +164,20 @@ This is done once, under **Company > Custom Import**: choose **Add Template**, p
 
 Staffing agencies are paid every two weeks, for two full weeks, Monday to Sunday. On the Wednesday after, accounting sends each agency its people's hours.
 
-1. Save every supervisor's returned Excel file for both weeks somewhere in one folder. Folders inside it are fine, such as one per week.
-2. Choose **Make the agency hours...** and pick that folder.
-3. Punch Clock reads every review file in it from the last pay period that has ended, and writes one Excel file per agency into a new `Agency hours` folder there. An agency whose people are sent by two companies gets a file from each.
+1. Make sure every supervisor's returned file for both weeks has been received.
+2. Choose **Make the agency hours...**.
+3. Punch Clock reads the files received for the last pay period that has ended, and writes one Excel file per agency into a new folder under `Agency hours`. An agency whose people are sent by two companies gets a file from each.
+
+   Without an accounting folder, save every returned file for both weeks in one folder (folders inside it are fine), and pick it when asked. The files are then made in a new `Agency hours` folder there.
 4. Check each file. Lunch is charged for each scheduled day worked, at the rate in the settings file. For anyone who didn't buy lunch, change their **Lunch days** under **Detail by week**, or type over their lunch, and the totals follow. Then send it to the agency's email at the top.
 
 Each file starts with a short table of the agency's people, by the name the agency knows them by, with their regular and overtime hours for the two weeks and their lunch. Below it, **Detail by week** shows each week's regular hours, overtime hours and lunch days. Hours are decimals, so 7.75 is 7 hours 45 minutes. Each week's figures are the ones its supervisor approved: overtime is worked out a week at a time, so the two weeks are only added together.
 
 The hours are worked out again from each file, as for payroll, so a correction saved in a file after the first week is included. It stops, and makes nothing, if:
 
-- A supervisor's file for a week, or one employee for a week, is in the folder twice, such as the file as sent and the file as returned. Keep only the returned one.
+- Without an accounting folder: a supervisor's file for a week, or one employee for a week, is in the folder twice, such as the file as sent and the file as returned. Keep only the returned one.
 - Someone with an agency has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on a payroll person's row doesn't hold up the agency files.
-- A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
+- Without an accounting folder: a spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
 When it's done, the window lists any supervisor in the settings file with no file for a week, anyone the settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
 
@@ -249,6 +299,7 @@ The file has a section for each organization, because organizations can have dep
 | `agencies_paid_by` | The company that sends this organization's agency staff hours to their agency, as it should appear after FROM. Needed once the organization has anyone with an agency under `employees` |
 | `payrolls` | Optional, beside `organizations` at the top. Every payroll named under `employees`, each written once |
 | `agencies` | Optional, beside `organizations` at the top. Every staffing agency named under `employees`, each written once, with the `legal_name` and the `contact` email its hours are sent to |
+| `accounting_folder` | Optional, beside `organizations` at the top. Where returned files are kept and payroll and agency files are made, on a share only accounting can open, with each `\` written twice. See [The accounting folder](#the-accounting-folder) |
 | `payroll_runs` | Optional, beside `organizations` at the top. A payroll button for each name, reading only the organizations listed under it, like `"payroll_runs": { "EXAMPLE": ["Example Co."], "SECOND": ["Second Example Ltd."] }`. Every organization must be in exactly one. A payroll that pays people in two of them gets a file from each, and both are imported. See [Payroll files](#payroll-files) |
 | `agency_pay` | Needed beside `agencies`. `lunch_per_day` is the dollars charged for each scheduled day an agency employee works, as a number. `period_starts` is the Monday any agency pay period started, as `"year-month-day"`. Every period is two weeks from there, so it only changes if the cycle does. See [Agency payday](#agency-payday) |
 

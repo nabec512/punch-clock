@@ -45,6 +45,7 @@ AGENCIES = "agencies"
 AGENCY_PAY = "agency_pay"
 AGENCIES_PAID_BY = "agencies_paid_by"
 PAYROLL_RUNS = "payroll_runs"
+ACCOUNTING_FOLDER = "accounting_folder"
 PERIOD_DAYS = 14  # agency staff are paid every two weeks
 ORGANIZATION_SECTIONS = ("supervisors", "department_schedules", "member_schedules")
 
@@ -107,6 +108,9 @@ class Settings:
     # Each payroll button's name, and the keys of the organizations whose files it reads, as organization_key gives
     # them. Empty for a single button that reads every organization.
     payroll_runs: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Where returned files are kept and payroll and agency files are made, on a share only accounting can open.
+    # None until it's set up, when each of those steps asks for a folder instead.
+    accounting_folder: Optional[Path] = None
 
     def payrolls_in(self, run: Optional[str]) -> tuple[str, ...]:
         """The payrolls that anyone in this run's organizations is paid through, or every payroll."""
@@ -482,7 +486,7 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
             "It's laid out the old way, for a single organization. Put each organization's supervisors, "
             "department_schedules and member_schedules in a section of its own under organizations."
         )
-    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY, PAYROLL_RUNS))
+    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY, PAYROLL_RUNS, ACCOUNTING_FOLDER))
     payrolls = _names(settings.get(PAYROLLS, []), PAYROLLS)
     agency_list = _agencies(settings.get(AGENCIES, {}))
     agencies = {key: agency.name for key, agency in agency_list.items()}
@@ -504,7 +508,20 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
         {a.name: a for a in agency_list.values()},
         agency_pay,
         _payroll_runs(settings.get(PAYROLL_RUNS, {}), organizations),
+        _accounting_folder(settings.get(ACCOUNTING_FOLDER)),
     )
+
+
+def _accounting_folder(value: object) -> Optional[Path]:
+    if value is None:
+        return None
+    folder = Path(value.strip()) if isinstance(value, str) else None
+    if folder is None or not folder.is_absolute():
+        raise LayoutMistake(
+            f"{ACCOUNTING_FOLDER} must be the full location of a folder, in quotes, with each \\ written twice, like "
+            r'"\\\\server\\Accounting\\Punch Clock" or "D:\\Accounting\\Punch Clock".'
+        )
+    return folder
 
 
 def _payroll_runs(value: object, organizations: dict[str, Organization]) -> dict[str, tuple[str, ...]]:

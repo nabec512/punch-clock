@@ -19,7 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
-from punch_clock import settings
+from punch_clock import archive, settings
 from punch_clock.agency_workbook import write_agency_workbook
 from punch_clock.approved_hours import ApprovedEmployee, ApprovedFile
 from punch_clock.assignments import safe_file_name
@@ -161,9 +161,12 @@ def file_name(report: AgencyReport, reports: list[AgencyReport]) -> str:
     return safe_file_name(f"{report.agency.name}{sender} {report.start} to {report.end}") + ".xlsx"
 
 
-def make_agency_hours(folder: str | Path, today: Optional[date] = None) -> AgencyResult:
-    """Read the latest pay period that has ended before ``today`` from ``folder``, and write each agency's file there."""
-    folder = Path(folder)
+def make_agency_hours(folder: Optional[str | Path] = None, today: Optional[date] = None) -> AgencyResult:
+    """Read the latest pay period that has ended before ``today``, and write each agency's file.
+
+    With the settings file's accounting folder, the files received there are read and the agency files are made
+    there. Otherwise every review file in ``folder`` and below it is read, and they're made in ``folder``.
+    """
     current = settings.load()
     if not current.agencies or current.agency_pay is None:
         raise UnsupportedExport(
@@ -171,13 +174,20 @@ def make_agency_hours(folder: str | Path, today: Optional[date] = None) -> Agenc
         )
     start = current.agency_pay.period_before(today or date.today())
     weeks = tuple(start + timedelta(days=7 * week) for week in range(WEEKS))
-    files, skipped = read_returned_files(folder, weeks, period_label(start))
+    if current.accounting_folder is not None:
+        files, skipped = archive.read_archive(current, weeks, period_label(start))
+        folder, parent = current.accounting_folder / archive.RETURNED, archive.output_parent(current, archive.AGENCY)
+    elif folder is None:
+        raise UnsupportedExport("Choose the folder with the supervisors' returned files.")
+    else:
+        folder = parent = Path(folder)
+        files, skipped = read_returned_files(folder, weeks, period_label(start))
     reports, warnings = collect(files, current, start, folder)
     warnings = skipped + warnings
     if current.note:
         warnings.insert(0, current.note)
 
-    output = new_folder(folder, f"{FOLDER_PREFIX} {start} to {start + timedelta(days=PERIOD_DAYS - 1)}")
+    output = new_folder(parent, f"{FOLDER_PREFIX} {start} to {start + timedelta(days=PERIOD_DAYS - 1)}")
     check_output(output.with_name(output.name + ".tmp"), [file_name(report, reports) for report in reports])
     building = output.with_name(output.name + ".tmp")
     building.mkdir()
