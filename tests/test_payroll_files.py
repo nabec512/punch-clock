@@ -285,3 +285,31 @@ def test_accented_names_reach_the_file_in_plain_letters(returned):
     result = make_payroll_files(folder, today=NEXT_WEDNESDAY)
     assert read(result.folder / "Main Payroll 2026-03-02.csv")[1] == "ZAK LUCJA,7,RT,40.00,1"
     assert "ŻAK, ŁUCJA" in result.summary.read_text(encoding="utf-8")
+
+
+def moved(tmp_path, other_people):
+    """Cy moved to Other Org, where he has a new member code linked to the same number."""
+    other = organization(
+        {"Office": "Oli Other"}, {"Office": EIGHT_TO_FOUR_THIRTY},
+        employees={"CY-2": {"name": "STAFF, CY", "payroll": "Main Payroll", "number": "7"}},
+    )
+    setup_settings(others={"Other Org": other})
+    for company, people in ((COMPANY, crew()), ("Other Org", other_people)):
+        source = tmp_path / f"export {company}.xlsx"
+        build_workbook(people, company=company).save(source)
+        process_export(source, tmp_path)
+    return make_payroll_files(tmp_path, today=NEXT_WEDNESDAY)
+
+
+def test_a_moved_employees_old_code_with_no_hours_is_no_trouble(tmp_path):
+    result = moved(tmp_path, [Person("Cy Staff", "CY-2", "Office", [])])
+    assert read(result.folder / "Main Payroll 2026-03-02.csv")[1:] == ["STAFF CY,7,RT,40.00,1"]
+
+
+def test_hours_under_both_codes_in_one_week_are_left_out_and_listed(tmp_path):
+    result = moved(tmp_path, [Person("Cy Staff", "CY-2", "Office", shift(0))])
+    assert not (result.folder / "Main Payroll 2026-03-02.csv").exists()  # Cy was its only one with hours
+    assert any(
+        w.startswith("Left out of Main Payroll: STAFF, CY (7) has hours this week in both Example Co. and Other Org.")
+        for w in result.warnings
+    )

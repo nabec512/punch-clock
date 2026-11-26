@@ -257,6 +257,8 @@ Someone with no schedule is paid as worked, with overtime starting at 8:15.
 Some employees are on a different company's books from the organization they punch in, and some are employed through a staffing agency. So the file says who pays each person, one by one, under `employees` in the section for the organization they punch in:
 
 - **Through a payroll:** `name`, `payroll` and `number`. The number is their employee number in that payroll, in quotes. Numbers only need to be unique within a payroll, but one number can't be given to two people in the same payroll anywhere in the file.
+
+  **Someone who moves organization** gets a new member code in Jibble. Add the new code under the new organization, with the same payroll, number and name, and keep the old one until no week you might rerun has hours under it. The same number is allowed twice as long as the name is the same. If both codes have hours in the same week, the payroll file leaves that person out and says so, to be entered by hand: each organization's file worked out overtime on its own part of the week.
 - **Through an agency:** `name` and `agency`. The agency is sent their hours and bills for them.
 
 `name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one. Each agency is listed with where its hours go, and an organization with anyone from an agency says, in `agencies_paid_by`, which company sends them. That doesn't depend on where people punch: two organizations can name the same company.
@@ -284,7 +286,7 @@ The file is edited by hand, so the app checks all of it each time and refuses it
 - A setting the app doesn't know, such as `day` for `days`. It's never ignored, because a misspelled setting would quietly change someone's pay.
 - A missing section, a time or day that can't be read, an end that isn't after its start, or a schedule that leaves no paid hours after lunch.
 - A department in `member_departments` that isn't listed in `supervisors` or `department_schedules`, as a misspelling would give that person the wrong hours.
-- A payroll or agency under `employees` that isn't listed at the top, an employee number that isn't all digits, someone linked to both a payroll and an agency, or one employee number given to two people in the same payroll.
+- A payroll or agency under `employees` that isn't listed at the top, an employee number that isn't all digits, someone linked to both a payroll and an agency, or one employee number given to two people, with different names, in the same payroll.
 - The same organization, department or member code twice.
 
 Capitals don't matter in department names and member codes, and neither does a space before or after them.

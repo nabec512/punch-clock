@@ -264,7 +264,7 @@ def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
 
 
 def _organization(
-    name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], str]
+    name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], tuple[str, str]]
 ) -> Organization:
     entry = _known(
         entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments", "employees", AGENCIES_PAID_BY),
@@ -384,7 +384,7 @@ def _employee_number(value: object, where: str) -> str:
 
 
 def _pay_links(
-    entry: object, where: str, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], str]
+    entry: object, where: str, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], tuple[str, str]]
 ) -> dict[str, PayLink]:
     """Who pays each listed member. ``numbers`` holds the employee numbers given out so far in the whole file."""
     links = {}
@@ -408,12 +408,14 @@ def _pay_links(
         if "number" not in link:
             raise LayoutMistake(f'{here} needs "number", their employee number in {payroll}.')
         number = _employee_number(link["number"], here)
-        # Two people with one number would have one person's hours paid to the other.
-        taken = numbers.setdefault((payroll, int(number)), here)
-        if taken != here:
+        # Two people with one number would have one person's hours paid to the other. One person can have two
+        # member codes, though, after moving organization: the old one for the weeks before, the new one after.
+        # So the same number is allowed under the same name, and the payroll files refuse it if both have hours.
+        taken, owner = numbers.setdefault((payroll, int(number)), (here, name))
+        if taken != here and organization_key(owner) != organization_key(name):
             raise LayoutMistake(
-                f"Employee number {number} in {payroll} is given to both {taken} and {here}. If someone has moved "
-                "organization, take them out of the one they've left."
+                f"Employee number {number} in {payroll} is given to both {taken} ({owner}) and {here} ({name}). "
+                "Two people can't share a number. If it's one person who moved organization, give both the same name."
             )
         links[_key(code)] = PayLink(name, payroll, number)
     return links
@@ -476,7 +478,7 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
             f'The file lists agencies, so it needs "{AGENCY_PAY}" beside them, with lunch_per_day and period_starts.'
         )
     agency_pay = _agency_pay(settings[AGENCY_PAY]) if AGENCY_PAY in settings else None
-    numbers: dict[tuple[str, int], str] = {}
+    numbers: dict[tuple[str, int], tuple[str, str]] = {}
     sections = _section(settings["organizations"], "organizations")
     organizations = {
         organization_key(name): _organization(name, entry, payrolls, agencies, numbers) for name, entry in sections.items()

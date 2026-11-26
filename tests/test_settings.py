@@ -638,16 +638,31 @@ def test_who_pays_mistakes_are_refused(text, message):
 
 
 def test_one_employee_number_can_only_belong_to_one_person_in_the_whole_file():
-    """Such as someone who moved organization and is still listed in the one they left."""
     write_settings(
         settings.file_path(),
         employees={"AL-1": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "12"}},
         payrolls=["Main Payroll"],
-        others={"Other Org": organization(employees={"XY-9": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "0012"}})},
+        others={"Other Org": organization(employees={"XY-9": {"name": "ZAK, LUCJA", "payroll": "Main Payroll", "number": "0012"}})},
     )
     message = mistake_in_file()
-    assert f"number 0012 in Main Payroll is given to both {COMPANY}, employees, AL-1 and Other Org, employees, XY-9" in message
-    assert "take them out of the one they've left" in message
+    assert (
+        f"number 0012 in Main Payroll is given to both {COMPANY}, employees, AL-1 (LEE, AVERY) "
+        "and Other Org, employees, XY-9 (ZAK, LUCJA)"
+    ) in message
+    assert "Two people can't share a number" in message
+
+
+def test_someone_who_moved_organization_keeps_their_number_under_both_codes():
+    """The old code for the weeks before the move, the new one for the weeks after."""
+    write_settings(
+        settings.file_path(),
+        employees={"AL-1": {"name": "LEE, AVERY", "payroll": "Main Payroll", "number": "12"}},
+        payrolls=["Main Payroll"],
+        others={"Other Org": organization(employees={"XY-9": {"name": "Lee,  Avery", "payroll": "Main Payroll", "number": "0012"}})},
+    )
+    loaded = settings.load()
+    assert loaded.organization(COMPANY).pay_link("AL-1").number == "12"
+    assert loaded.organization("Other Org").pay_link("XY-9").number == "0012"
 
 
 def mistake_in_file():

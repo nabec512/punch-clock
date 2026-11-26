@@ -134,10 +134,32 @@ def collect(files: list[ApprovedFile], current: settings.Settings, folder: Path)
             "and try again:"
             "\n\n" + "\n".join(problems)
         )
-    warnings = []
+    warnings = _numbers_in_two_places(by_payroll)
     if not_reviewed:
         warnings.append(f"Not marked Reviewed by their supervisor: {', '.join(sorted(not_reviewed, key=str.casefold))}.")
     return by_payroll, warnings
+
+
+def _numbers_in_two_places(by_payroll: dict[str, list[PayrollLine]]) -> list[str]:
+    """Someone who moved organization has a member code in each, linked to one employee number. Hours under both in
+    one week can't be paid from these files, as each organization's file worked out overtime on its own part of the
+    week. So they're left out, which leaves PowerPay's entries for them alone, and listed to enter by hand."""
+    warnings = []
+    for payroll, lines in by_payroll.items():
+        places: dict[int, list[PayrollLine]] = {}
+        for line in lines:
+            if line.regular or line.overtime:
+                places.setdefault(int(line.number), []).append(line)
+        for number, found in places.items():
+            if len(found) > 1:
+                lines[:] = [line for line in lines if int(line.number) != number]
+                where = " and ".join(sorted({line.organization for line in found}))
+                warnings.append(
+                    f"Left out of {payroll}: {found[0].name} ({found[0].number}) has hours this week in both {where}. "
+                    "Enter their hours in PowerPay by hand, after the import. If they're two people, give one their own "
+                    "number in the settings file."
+                )
+    return warnings
 
 
 def _write_csv(path: Path, lines: list[PayrollLine]) -> None:
