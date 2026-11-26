@@ -103,7 +103,8 @@ def process_summary(result: ProcessResult) -> str:
 
 
 def payroll_summary(result: PayrollResult) -> str:
-    lines = [f"Done. The payroll files for {week_label(result.start)} are in this folder:", result.folder.name, ""]
+    which = f"{result.run} payroll files" if result.run else "payroll files"
+    lines = [f"Done. The {which} for {week_label(result.start)} are in this folder:", result.folder.name, ""]
     for payroll in result.payrolls:
         lines.append(
             f"  {payroll.path.name}: {_employees(len(payroll.lines))}, {hours_text(payroll.regular)} regular hours, "
@@ -189,6 +190,11 @@ def process_in_window(root, source: Path, working: Callable[[bool], None], finis
 
     working(True)
     _in_background(root, lambda: process_export(source), done)
+
+
+def payroll_button_names(runs: Sequence[str]) -> list[tuple[str, Optional[str]]]:
+    """Each payroll button's text and the run it makes, from the settings file's payroll_runs, or one for everyone."""
+    return [(f"{run} Payroll Files...", run) for run in runs] or [("Make the payroll files...", None)]
 
 
 def choose_returned_folder(parent, weeks: str) -> Optional[Path]:
@@ -322,7 +328,7 @@ def run_window() -> int:
     def show_working(working: bool) -> None:
         nonlocal making_reports
         making_reports = working
-        for button in (process_button, payroll_button, agency_button, settings_button):
+        for button in controls:
             button.state(["disabled" if working else "!disabled"])
         if working:
             progress.grid()
@@ -397,17 +403,42 @@ def run_window() -> int:
         chosen = choose_settings_file(root)
         if chosen:
             settings_location.set(f"Settings file: {chosen}")
+            read_payroll_runs()
+
+    def show_payroll_buttons(runs: Sequence[str]) -> None:
+        """One button per payroll run in the settings file, so each company makes only its own files."""
+        for child in payroll_frame.winfo_children():
+            child.destroy()
+        buttons = []
+        for column, (text, run) in enumerate(payroll_button_names(runs)):
+            make = (lambda folder, run=run: make_payroll_files(folder, run=run))
+            button = ttk.Button(
+                payroll_frame, text=text,
+                command=from_returned_files("last week", f"{run + ' ' if run else ''}payroll files", make, payroll_summary),
+            )
+            button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
+            payroll_frame.columnconfigure(column, weight=1, uniform="payroll")
+            if making_reports:
+                button.state(["disabled"])
+            buttons.append(button)
+        controls[:] = [process_button, *buttons, agency_button, settings_button]
+
+    def read_payroll_runs() -> None:
+        """Once when the window opens, and when the settings file changes. If it can't be read, the one button
+        stays, and clicking it explains why."""
+
+        def loaded(current: Optional[settings.Settings], _error) -> None:
+            if current is not None and root.winfo_exists():
+                show_payroll_buttons(list(current.payroll_runs))
+
+        _in_background(root, settings.load, loaded)
 
     ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
     process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
     ttk.Label(frame, text="When the supervisors have sent back last week's files:").grid(row=2, column=0, sticky="w")
-    payroll_button = ttk.Button(
-        frame,
-        text="Make the payroll files...",
-        command=from_returned_files("last week", "payroll files", make_payroll_files, payroll_summary),
-    )
-    payroll_button.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+    payroll_frame = ttk.Frame(frame)
+    payroll_frame.grid(row=3, column=0, sticky="ew", pady=(4, 12))
     ttk.Label(frame, text="On agency payday, for the last two weeks:").grid(row=4, column=0, sticky="w")
     agency_button = ttk.Button(
         frame,
@@ -427,8 +458,11 @@ def run_window() -> int:
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
     open_button.state(["disabled"])
     open_button.pack(side="right")
+    controls: list = []  # every button that's disabled while something is being made, kept up to date
+    show_payroll_buttons([])
+    read_payroll_runs()
     if updater.is_packaged():
-        _offer_update(root, status, [process_button, payroll_button, agency_button, settings_button], lambda: busy)
+        _offer_update(root, status, controls, lambda: busy)
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
     return 0

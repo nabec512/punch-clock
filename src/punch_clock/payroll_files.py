@@ -72,6 +72,7 @@ class PayrollFile:
 class PayrollResult:
     folder: Path
     start: date
+    run: Optional[str]  # the payroll button's name, or None for every organization
     payrolls: tuple[PayrollFile, ...]
     summary: Path
     files: tuple[ApprovedFile, ...]  # the review files read
@@ -97,11 +98,13 @@ def hours_text(minutes: int) -> str:
     return f"{minutes / 60:.2f}"
 
 
-def collect(files: list[ApprovedFile], current: settings.Settings, folder: Path) -> tuple[dict[str, list[PayrollLine]], list[str]]:
+def collect(
+    files: list[ApprovedFile], current: settings.Settings, folder: Path, payrolls: tuple[str, ...]
+) -> tuple[dict[str, list[PayrollLine]], list[str]]:
     """Everyone's hours by payroll, and the warnings to show. Stops on anything that would make a file wrong."""
     unlinked: list[str] = []
     problems: list[str] = []
-    by_payroll: dict[str, list[PayrollLine]] = {payroll: [] for payroll in current.payrolls}
+    by_payroll: dict[str, list[PayrollLine]] = {payroll: [] for payroll in payrolls}
     not_reviewed: list[str] = []
     for file in files:
         organization = current.organization(file.company)
@@ -175,8 +178,11 @@ def _write_csv(path: Path, lines: list[PayrollLine]) -> None:
                 writer.writerow((name, line.number, OVERTIME_CODE, hours_text(line.overtime), WEEKLY))
 
 
-def summary_text(start: date, payrolls: list[PayrollFile], files: list[ApprovedFile], warnings: list[str], folder: Path) -> str:
-    lines = [f"Payroll hours for {week_label(start)}", ""]
+def summary_text(
+    start: date, payrolls: list[PayrollFile], files: list[ApprovedFile], warnings: list[str], folder: Path,
+    run: Optional[str] = None,
+) -> str:
+    lines = [f"{run + ' p' if run else 'P'}ayroll hours for {week_label(start)}", ""]
     lines += ["Hours are decimals: 7.75 is 7 hours 45 minutes. RT is regular hours, OT is overtime.", ""]
     for payroll in payrolls:
         lines.append(
@@ -199,16 +205,26 @@ def _file_name(payroll: str, start: date) -> str:
     return safe_file_name(f"{payroll} {start}") + ".csv"
 
 
-def make_payroll_files(folder: str | Path, today: Optional[date] = None) -> PayrollResult:
-    """Read the last full week before ``today`` from ``folder``, and write each payroll's import file there."""
+def make_payroll_files(folder: str | Path, today: Optional[date] = None, run: Optional[str] = None) -> PayrollResult:
+    """Read the last full week before ``today`` from ``folder``, and write each payroll's import file there.
+
+    ``run`` is one of the settings file's payroll_runs: only its organizations' files are read. Without one, every
+    organization's are.
+    """
     folder = Path(folder)
     current = settings.load()
     if not current.payrolls:
         raise UnsupportedExport(f"The settings file doesn't list any payrolls yet, so there's no one to pay:\n\n{current.path}")
+    if run is not None and run not in current.payroll_runs:
+        raise UnsupportedExport(
+            f"The settings file no longer has {run} under {settings.PAYROLL_RUNS}. Close Punch Clock and open it again."
+        )
+    only = set(current.payroll_runs[run]) if run else None
+    others = [o.name for key, o in current.organizations.items() if only is not None and key not in only]
     start = last_full_week(today or date.today())
-    files, skipped = read_returned_files(folder, (start,), week_label(start))
-    by_payroll, warnings = collect(files, current, folder)
-    warnings = skipped + missing_files(files, current, (start,)) + warnings
+    files, skipped = read_returned_files(folder, (start,), week_label(start), only, others)
+    by_payroll, warnings = collect(files, current, folder, current.payrolls_in(run))
+    warnings = skipped + missing_files(files, current, (start,), only) + warnings
     if current.note:
         warnings.insert(0, current.note)
     paid = {payroll: lines for payroll, lines in by_payroll.items() if any(line.regular or line.overtime for line in lines)}
@@ -217,8 +233,16 @@ def make_payroll_files(folder: str | Path, today: Optional[date] = None) -> Payr
     idle = [payroll for payroll in by_payroll if payroll not in paid]
     if idle:
         warnings.append(f"No one has hours this week in: {', '.join(idle)}, so there's no file for it.")
+    for payroll in paid:
+        shared = [other for other in current.payroll_runs if other != run and payroll in current.payrolls_in(other)]
+        if run and shared:
+            warnings.append(
+                f"{payroll} also pays people in {', '.join(shared)}. Import that file too: each import only replaces "
+                "the hours of the people in it."
+            )
 
-    output = new_folder(folder, f"{FOLDER_PREFIX} {start} to {start + timedelta(days=6)}")
+    label = f"{safe_file_name(run)} " if run else ""
+    output = new_folder(folder, f"{FOLDER_PREFIX} {label}{start} to {start + timedelta(days=6)}")
     summary_name = f"Payroll summary {start}.txt"
     check_output(output.with_name(output.name + ".tmp"), [_file_name(payroll, start) for payroll in paid] + [summary_name])
     building = output.with_name(output.name + ".tmp")
@@ -230,9 +254,9 @@ def make_payroll_files(folder: str | Path, today: Optional[date] = None) -> Payr
             name = _file_name(payroll, start)
             _write_csv(building / name, lines)
             payrolls.append(PayrollFile(payroll, output / name, tuple(lines)))
-        (building / summary_name).write_text(summary_text(start, payrolls, files, warnings, folder), encoding="utf-8")
+        (building / summary_name).write_text(summary_text(start, payrolls, files, warnings, folder, run), encoding="utf-8")
         building.rename(output)
     except BaseException:
         shutil.rmtree(building, ignore_errors=True)
         raise
-    return PayrollResult(output, start, tuple(payrolls), output / summary_name, tuple(files), tuple(warnings))
+    return PayrollResult(output, start, run, tuple(payrolls), output / summary_name, tuple(files), tuple(warnings))

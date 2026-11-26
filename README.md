@@ -90,8 +90,10 @@ To correct a punch or a position, fix it in Jibble, export again, and start from
 
 Once every supervisor has sent back last week's Excel file, accounting makes one PowerPay import file per payroll.
 
+Where each company's accounting makes its own payroll files, `payroll_runs` in the settings file gives each one a button, such as **EXAMPLE Payroll Files...**, that reads only its own organizations' files. Without it there's one **Make the payroll files...** button for every organization.
+
 1. Save every returned Excel file for the week somewhere in one folder. Folders inside it are fine, such as one per organization. Corrections made on paper are typed into the Excel file first.
-2. Choose **Make the payroll files...** and pick that folder.
+2. Choose the payroll button and pick that folder.
 3. Punch Clock reads every review file in it from the last full week, Monday to Sunday, and writes one `.csv` file per payroll into a new `Payroll files` folder there, with a summary of everyone's hours.
 4. In PowerPay, import each file into its payroll's run, with the Employee Timesheet custom import template. **Import first, then key holidays, sick days and vacation:** an import replaces everything already keyed in that run for each person in the file.
 5. Check the totals in PowerPay against the summary.
@@ -248,6 +250,7 @@ The file has a section for each organization, because organizations can have dep
 | `agencies_paid_by` | The company that sends this organization's agency staff hours to their agency, as it should appear after FROM. Needed once the organization has anyone with an agency under `employees` |
 | `payrolls` | Optional, beside `organizations` at the top. Every payroll named under `employees`, each written once |
 | `agencies` | Optional, beside `organizations` at the top. Every staffing agency named under `employees`, each written once, with the `legal_name` and the `contact` email its hours are sent to |
+| `payroll_runs` | Optional, beside `organizations` at the top. A payroll button for each name, reading only the organizations listed under it, like `"payroll_runs": { "EXAMPLE": ["Example Co."], "SECOND": ["Second Example Ltd."] }`. Every organization must be in exactly one. A payroll that pays people in two of them gets a file from each, and both are imported. See [Payroll files](#payroll-files) |
 | `agency_pay` | Needed beside `agencies`. `lunch_per_day` is the dollars charged for each scheduled day an agency employee works, as a number. `period_starts` is the Monday any agency pay period started, as `"year-month-day"`. Every period is two weeks from there, so it only changes if the cycle does. See [Agency payday](#agency-payday) |
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, Union
+from typing import Iterable, Optional, Union
 
 import openpyxl
 
 from punch_clock import reports, settings
 from punch_clock.approved_hours import FIRST_READABLE_VERSION, ApprovedFile, read_approved_hours
+from punch_clock.assignments import safe_file_name
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.review_workbook import COMPANY, DATA_SHEET, REVIEW_SHEET, WEEK_START
 from punch_clock.settings import organization_key
@@ -65,23 +66,28 @@ def _peek(path: Path) -> Union[tuple[str, date], str, None]:
         workbook.close()
 
 
-def find_review_files(folder: Path, weeks: Iterable[date]) -> tuple[list[Path], list[Path], list[Path]]:
+def find_review_files(
+    folder: Path, weeks: Iterable[date], only: Optional[set[str]] = None, others: Iterable[str] = ()
+) -> tuple[list[Path], list[Path], list[Path]]:
     """Every review file in ``folder`` or below it from these weeks, and the spreadsheets that couldn't be read.
 
     Those are split into the ones that may be from these weeks, as their names have one of the
-    weeks' dates in them, and the rest.
+    weeks' dates in them, and the rest. ``only`` limits it to these organizations, by organization_key.
+    A file that can't be read can't say where it's from, so one named for one of the ``others``, as
+    review files' names start with their organization, is left to that organization's run.
     """
     weeks = set(weeks)
     dates = {week.isoformat() for week in weeks}
+    elsewhere = tuple(f"{safe_file_name(name)} - ".casefold() for name in others)
     found, wanted_unreadable, other_unreadable = [], [], []
     for path in sorted(folder.rglob("*")):
         if path.suffix.casefold() not in SPREADSHEETS or path.name.startswith("~$") or not path.is_file():
             continue
         about = _peek(path)
         if isinstance(about, tuple):
-            if about[1] in weeks:
+            if about[1] in weeks and (only is None or organization_key(about[0]) in only):
                 found.append(path)
-        elif about is not None:
+        elif about is not None and not path.name.casefold().startswith(elsewhere):
             (wanted_unreadable if any(day in path.name for day in dates) else other_unreadable).append(path)
     return found, wanted_unreadable, other_unreadable
 
@@ -114,12 +120,14 @@ def check_twice(files: list[ApprovedFile], folder: Path) -> None:
                 )
 
 
-def read_returned_files(folder: Path, weeks: tuple[date, ...], period: str) -> tuple[list[ApprovedFile], list[str]]:
+def read_returned_files(
+    folder: Path, weeks: tuple[date, ...], period: str, only: Optional[set[str]] = None, others: Iterable[str] = ()
+) -> tuple[list[ApprovedFile], list[str]]:
     """Every review file for these weeks, read and checked for duplicates, and the warnings about what was skipped.
 
-    ``period`` names the weeks in messages.
+    ``period`` names the weeks in messages. ``only`` and ``others`` are as for find_review_files.
     """
-    paths, wanted_unreadable, other_unreadable = find_review_files(folder, weeks)
+    paths, wanted_unreadable, other_unreadable = find_review_files(folder, weeks, only, others)
     if wanted_unreadable:
         raise UnsupportedExport(
             f"These files may be supervisor files for {period}, but Punch Clock can't read them:\n\n"
@@ -145,16 +153,21 @@ def read_returned_files(folder: Path, weeks: tuple[date, ...], period: str) -> t
     return files, warnings
 
 
-def missing_files(files: list[ApprovedFile], current: settings.Settings, weeks: tuple[date, ...]) -> list[str]:
+def missing_files(
+    files: list[ApprovedFile], current: settings.Settings, weeks: tuple[date, ...], only: Optional[set[str]] = None
+) -> list[str]:
     """Each organization with no files for a week, and each supervisor in the settings file with no file for a week.
 
     A supervisor with nobody in their departments that week has no file, so this can only be a warning.
+    ``only`` limits it to these organizations, by organization_key.
     """
     found: dict[tuple[str, date], set[str]] = {}
     for file in files:
         found.setdefault((organization_key(file.company), file.start), set()).add(file.group.casefold())
     warnings = []
     for key, organization in current.organizations.items():
+        if only is not None and key not in only:
+            continue
         supervisors = sorted({name for name in organization.supervisors.values() if name}, key=str.casefold)
         for week in weeks:
             groups = found.get((key, week))

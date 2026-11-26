@@ -44,6 +44,7 @@ PAYROLLS = "payrolls"
 AGENCIES = "agencies"
 AGENCY_PAY = "agency_pay"
 AGENCIES_PAID_BY = "agencies_paid_by"
+PAYROLL_RUNS = "payroll_runs"
 PERIOD_DAYS = 14  # agency staff are paid every two weeks
 ORGANIZATION_SECTIONS = ("supervisors", "department_schedules", "member_schedules")
 
@@ -103,6 +104,18 @@ class Settings:
     payrolls: tuple[str, ...] = ()
     agencies: dict[str, Agency] = field(default_factory=dict)  # by name, as listed
     agency_pay: Optional[AgencyPay] = None  # set whenever any agency is listed
+    # Each payroll button's name, and the keys of the organizations whose files it reads, as organization_key gives
+    # them. Empty for a single button that reads every organization.
+    payroll_runs: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def payrolls_in(self, run: Optional[str]) -> tuple[str, ...]:
+        """The payrolls that anyone in this run's organizations is paid through, or every payroll."""
+        if run is None:
+            return self.payrolls
+        used = {
+            link.payroll for key in self.payroll_runs[run] for link in self.organizations[key].employees.values() if link.payroll
+        }
+        return tuple(payroll for payroll in self.payrolls if payroll in used)
 
     @property
     def links_pay(self) -> bool:
@@ -469,7 +482,7 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
             "It's laid out the old way, for a single organization. Put each organization's supervisors, "
             "department_schedules and member_schedules in a section of its own under organizations."
         )
-    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY))
+    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY, PAYROLL_RUNS))
     payrolls = _names(settings.get(PAYROLLS, []), PAYROLLS)
     agency_list = _agencies(settings.get(AGENCIES, {}))
     agencies = {key: agency.name for key, agency in agency_list.items()}
@@ -484,8 +497,49 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
         organization_key(name): _organization(name, entry, payrolls, agencies, numbers) for name, entry in sections.items()
     }
     return Settings(
-        organizations, path, note, tuple(payrolls.values()), {a.name: a for a in agency_list.values()}, agency_pay
+        organizations,
+        path,
+        note,
+        tuple(payrolls.values()),
+        {a.name: a for a in agency_list.values()},
+        agency_pay,
+        _payroll_runs(settings.get(PAYROLL_RUNS, {}), organizations),
     )
+
+
+def _payroll_runs(value: object, organizations: dict[str, Organization]) -> dict[str, tuple[str, ...]]:
+    """Each payroll button and its organizations. Every organization must be in exactly one, or its people would be
+    paid twice or not at all."""
+    runs: dict[str, tuple[str, ...]] = {}
+    taken: dict[str, str] = {}
+    for label, listed in _section(value, PAYROLL_RUNS).items():
+        name = " ".join(label.split())
+        where = f"{PAYROLL_RUNS}, {name}"
+        if not name:
+            raise LayoutMistake(f"{PAYROLL_RUNS}: each one needs a name, which goes on its button.")
+        if not isinstance(listed, list) or not listed or not all(isinstance(item, str) for item in listed):
+            raise LayoutMistake(f'{where} should list organizations in quotes between square brackets, like ["Example Co."].')
+        keys = []
+        for organization in listed:
+            key = organization_key(organization)
+            if key not in organizations:
+                known = ", ".join(o.name for o in organizations.values())
+                raise LayoutMistake(
+                    f'{where}: "{organization.strip()}" isn\'t one of the organizations, so check its spelling. '
+                    f"Organizations: {known}."
+                )
+            if key in taken:
+                raise LayoutMistake(f"{where}: {organizations[key].name} is already in {taken[key]}. Put each organization in one.")
+            taken[key] = name
+            keys.append(key)
+        runs[name] = tuple(keys)
+    left = [organization.name for key, organization in organizations.items() if key not in taken]
+    if runs and left:
+        raise LayoutMistake(
+            f"{PAYROLL_RUNS} leaves out {', '.join(left)}, so no payroll button would read its files. "
+            "Add each organization to one of them."
+        )
+    return runs
 
 
 def _checked(data: bytes, path: Path) -> Settings:

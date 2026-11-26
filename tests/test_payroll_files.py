@@ -1,4 +1,5 @@
 """Each payroll's PowerPay import file for one week, from the returned review files. All values are fictional."""
+import json
 import shutil
 from datetime import date, timedelta
 
@@ -8,7 +9,7 @@ from sample_export import COMPANY, WEEK_START, Person, build_workbook, organizat
 from test_review_flow import Sheet
 
 from punch_clock import reports, settings
-from punch_clock.app import payroll_summary
+from punch_clock.app import payroll_button_names, payroll_summary
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.payroll_files import last_full_week, make_payroll_files, plain_name
 from punch_clock.reports import REVIEW_FOLDER, process_export
@@ -313,3 +314,70 @@ def test_hours_under_both_codes_in_one_week_are_left_out_and_listed(tmp_path):
         w.startswith("Left out of Main Payroll: STAFF, CY (7) has hours this week in both Example Co. and Other Org.")
         for w in result.warnings
     )
+
+
+def two_companies(tmp_path, runs=None, other_employees=None):
+    """Example Co. and Other Org, each with its own payroll run unless ``runs`` says otherwise."""
+    other = organization(
+        {"Office": "Oli Other"}, {"Office": EIGHT_TO_FOUR_THIRTY},
+        employees=other_employees or {"OB-1": {"name": "OTHER, BEA", "payroll": "Third Payroll", "number": "5"}},
+    )
+    setup_settings(others={"Other Org": other})
+    path = settings.file_path()
+    written = json.loads(path.read_text(encoding="utf-8"))
+    written["payroll_runs"] = runs if runs is not None else {"EXAMPLE": [COMPANY], "OTHER": ["Other Org"]}
+    path.write_text(json.dumps(written), encoding="utf-8")
+    for company, people in ((COMPANY, crew()), ("Other Org", [Person("Bea Other", "OB-1", "Office", weekdays())])):
+        source = tmp_path / f"export {company}.xlsx"
+        build_workbook(people, company=company).save(source)
+        process_export(source, tmp_path)
+
+
+def test_each_payroll_run_reads_only_its_own_organizations(tmp_path):
+    two_companies(tmp_path)
+    example = make_payroll_files(tmp_path, today=NEXT_WEDNESDAY, run="EXAMPLE")
+    assert example.folder.name == "Payroll files EXAMPLE 2026-03-02 to 2026-03-08" and example.run == "EXAMPLE"
+    assert [p.payroll for p in example.payrolls] == ["Main Payroll", "Second Payroll"]
+    assert all("Other Org" not in w and "Third Payroll" not in w for w in example.warnings)
+    assert {f.company for f in example.files} == {COMPANY}
+    other = make_payroll_files(tmp_path, today=NEXT_WEDNESDAY, run="OTHER")
+    assert [p.payroll for p in other.payrolls] == ["Third Payroll"] and len(other.files) == 1
+    assert read(other.folder / "Third Payroll 2026-03-02.csv")[1:] == ["OTHER BEA,5,RT,40.00,1"]
+    assert payroll_summary(other).startswith("Done. The OTHER payroll files for Mon Mar 2 to Sun Mar 8, 2026")
+
+
+def test_a_payroll_paying_people_in_two_runs_says_to_import_both(tmp_path):
+    two_companies(tmp_path, other_employees={"OB-1": {"name": "OTHER, BEA", "payroll": "Main Payroll", "number": "5"}})
+    result = make_payroll_files(tmp_path, today=NEXT_WEDNESDAY, run="OTHER")
+    assert read(result.folder / "Main Payroll 2026-03-02.csv")[1:] == ["OTHER BEA,5,RT,40.00,1"]
+    assert "Main Payroll also pays people in EXAMPLE. Import that file too" in " ".join(result.warnings)
+
+
+def test_another_runs_unreadable_file_doesnt_stop_this_one(tmp_path):
+    two_companies(tmp_path)
+    (tmp_path / "Other Org - Oli Other - Office - 2026-03-02 (copy).xlsx").write_bytes(b"password")
+    assert make_payroll_files(tmp_path, today=NEXT_WEDNESDAY, run="EXAMPLE").payrolls
+    with pytest.raises(UnsupportedExport, match="can't read them"):
+        make_payroll_files(tmp_path, today=NEXT_WEDNESDAY, run="OTHER")
+
+
+@pytest.mark.parametrize(
+    "runs, message",
+    [
+        ({"EXAMPLE": [COMPANY]}, "payroll_runs leaves out Other Org"),
+        ({"EXAMPLE": [COMPANY, "Other Org"], "OTHER": ["other org"]}, "Other Org is already in EXAMPLE"),
+        ({"EXAMPLE": [COMPANY], "OTHER": ["Other Orgs"]}, '"Other Orgs" isn\'t one of the organizations'),
+        ({"EXAMPLE": [COMPANY], "OTHER": "Other Org"}, "should list organizations in quotes"),
+        ({"EXAMPLE": [COMPANY], " ": ["Other Org"]}, "each one needs a name"),
+    ],
+)
+def test_payroll_run_mistakes_are_refused(tmp_path, runs, message):
+    with pytest.raises(UnsupportedExport, match="has a mistake in it") as stopped:
+        two_companies(tmp_path, runs)
+        settings.load()
+    assert message in str(stopped.value)
+
+
+def test_the_window_has_a_button_per_payroll_run():
+    assert payroll_button_names(["EXAMPLE", "OTHER"]) == [("EXAMPLE Payroll Files...", "EXAMPLE"), ("OTHER Payroll Files...", "OTHER")]
+    assert payroll_button_names([]) == [("Make the payroll files...", None)]
