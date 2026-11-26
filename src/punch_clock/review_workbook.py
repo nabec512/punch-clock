@@ -419,6 +419,8 @@ def _write_data_sheet(workbook, export: WeeklyExport, group: ReviewGroup, days: 
         for column, value in enumerate(values):
             if value is None:
                 sheet.write_blank(index, column, None)
+            elif isinstance(value, str):
+                sheet.write_string(index, column, value)  # a name starting with = stays a name
             else:
                 sheet.write(index, column, value)
     sheet.protect("")

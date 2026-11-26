@@ -28,17 +28,23 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 - Lunch is charged per scheduled day worked, at `agency_pay.lunch_per_day`, which can change from year to year. Weekend hours on a day off have no lunch. Lunch is optional for employees, so accounting changes the lunch days before sending. The amount and the totals are formulas, checked in real Excel.
 - The cycle is counted in two-week steps from `agency_pay.period_starts`. Each period is processed on the Wednesday after it ends. The real starting Monday is only in the private settings file.
 
+**0.11.0: weekly payroll files** (`payroll_files.py`, the **Make the payroll files...** button). One PowerPay import CSV per payroll for the last full week, in the layout below, with RT and OT on every payroll for now. A summary beside the files lists everyone's hours to check against PowerPay. Anyone not linked stops it, agency staff are left out, and an organization in the settings file with no file for the week is listed. Returned files are found the same way as for the agencies: anywhere in one chosen folder.
+
 ## Waiting on
 
-- **The PowerPay import layout.** One example import file or template, the pay codes for regular and overtime hours, and how dates and the pay period are written. The import file can't be written until this is known.
+- **Whether every payroll uses the same earning codes.** One payroll's codes are known: RT (Regular Hours) and OT (Overtime Hours, 1.5x), both paid in hours. They're assumed for every payroll for now and built into `payroll_files.py`. If a payroll turns out to differ, its codes go in the settings file.
+
+## PowerPay import layout
+
+PowerPay's custom import is set up once per company as an Employee Timesheet template, built from a sample file: comma-separated, with a header row. Punch Clock writes these columns, matched in the template to the PowerPay field in brackets: employee_number (Employee Number), earning_code (Earning Code), hours (Hours), applicable_period (Applicable Period, 1 for part or all of one week). One line per employee per earning code, with hours as decimals to two places.
+
+From PowerPay's File Import Guide: an import replaces every timesheet entry already in that payroll run for each employee it lists, including anything keyed by hand, and leaves everyone else alone. So the file must hold each employee's complete hours, and accounting imports first, then keys stat holidays (XT), sick days (QT) and vacation. Importing again replaces the earlier import. A line with a mistake, such as an unknown employee number, is skipped on its own.
 
 ## Next
 
-1. **Gather a week's returned files.** Find every returned review spreadsheet for one week from each Jibble organization, check that none is missing or included twice, and read them all with `approved_hours`. Corrections made on paper are typed into the spreadsheet first, so there's one kind of input. This needs the decision on where approved files are kept.
-2. **Weekly payroll files.** A new button takes one week's approved files from every Jibble organization, checks they're all there and all the same week, and writes one import file per payroll. An employee with no link stops it, and agency employees are left out. A short summary gives the totals per payroll, so accounting can check them.
-3. **Run alongside the manual process** for a few weeks, and compare the results with what accounting entered, before relying on it.
+1. **Set up the template in PowerPay** and import one week into a test or open run, to confirm PowerPay reads the file as expected.
+2. **Run alongside the manual process** for a few weeks, and compare the results with what accounting entered, before relying on it.
 
 ## Still to decide
 
-- Where approved supervisor files are kept for payroll. The agency step only needs both weeks in one folder.
 - How holidays, vacation and sick days for hourly staff are handled: they aren't in Jibble's punches.

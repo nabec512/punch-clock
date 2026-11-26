@@ -75,9 +75,6 @@ class AgencyPay:
         current = self.period_starts + timedelta(days=(day - self.period_starts).days // PERIOD_DAYS * PERIOD_DAYS)
         return current - timedelta(days=PERIOD_DAYS)
 
-    def starts_period(self, day: date) -> bool:
-        return (day - self.period_starts).days % PERIOD_DAYS == 0
-
 
 @dataclass(frozen=True)
 class Organization:
@@ -334,7 +331,8 @@ def _agencies(value: object) -> dict[str, Agency]:
         entry = _known(entry, where, ("legal_name", "contact"))
         legal_name = _text_setting(entry, "legal_name", where, "the company name their hours are sent to")
         contact = _text_setting(entry, "contact", where, "the email address their hours are sent to")
-        if " " in contact or "@" not in contact:
+        user, _, domain = contact.partition("@")
+        if " " in contact or not user or "." not in domain.strip("."):
             raise LayoutMistake(f'{where}: contact must be the email address their hours are sent to, like "name@example.com".')
         agencies[organization_key(name)] = Agency(" ".join(name.split()), legal_name, contact)
     return agencies

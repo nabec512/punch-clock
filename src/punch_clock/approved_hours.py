@@ -57,6 +57,7 @@ class ApprovedEmployee:
     total: Optional[int]
     reviewed: bool
     comment: str
+    problems: tuple[str, ...] = ()  # this employee's share of the file's problems
 
     @property
     def days_without_hours(self) -> tuple[date, ...]:
@@ -101,6 +102,8 @@ def read_approved_hours(path: str | Path) -> ApprovedFile:
     try:
         # The results Excel saved with each formula, and the values typed into the input cells.
         workbook = openpyxl.load_workbook(path, data_only=True)
+    except PermissionError:
+        raise  # open in Excel: the window says to close it
     except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError) as error:
         raise UnsupportedExport(f"{path.name} could not be opened. Make sure it's an Excel file.") from error
     if REVIEW_SHEET not in workbook.sheetnames or DATA_SHEET not in workbook.sheetnames:
@@ -230,6 +233,7 @@ def _read_employee(sheet, path: Path, days: list[_Day], problems: list[str]) -> 
         week.paid,
         reviewed,
         _text(_cell(sheet, week_row, COMMENT)),
+        tuple(problems[before:]),
     )
 
 
@@ -305,8 +309,10 @@ def _adjustment(value, paid: int, where: str, problems: list[str]) -> Optional[i
     whole = None if minutes is None else _whole(minutes)
     if whole is None:
         problems.append(f"{where}: the adjustment, {value}, isn't a number of minutes.")
-    elif whole % BLOCK_MINUTES or abs(whole) > DAY_MINUTES:
+    elif whole % BLOCK_MINUTES:
         problems.append(f"{where}: the adjustment, {whole}, isn't in steps of {BLOCK_MINUTES} minutes.")
+    elif abs(whole) > DAY_MINUTES:
+        problems.append(f"{where}: the adjustment, {whole} minutes, is more than a whole day.")
     elif paid + whole < 0:
         problems.append(f"{where}: the adjustment, {whole}, would take the approved hours below zero.")
     else:

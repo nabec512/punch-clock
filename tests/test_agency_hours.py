@@ -185,7 +185,7 @@ def test_a_supervisor_missing_a_week_is_listed(returned):
     folder, weeks = returned
     review_files(weeks[1], "Bea Boss")[0].unlink()
     result = make_agency_hours(folder, today=PAYDAY)
-    assert "Bea Boss (Example Co.) has no file for the week of Mar 9." in result.warnings
+    assert any(w.startswith("No file from Bea Boss (Example Co.) for the week of Mar 9.") for w in result.warnings)
     assert rows(result.reports[1][1]) == [("TEMP, ANN", 40, 0, 0, 0, 40, 0, 5, -15)]
 
 
@@ -285,7 +285,10 @@ def test_files_that_arent_review_files_are_skipped(returned):
     (folder / "notes.xlsx").write_bytes(b"not a spreadsheet")
     openpyxl.Workbook().save(folder / "budget.xlsx")
     (folder / "~$open by Excel.xlsx").write_bytes(b"lock")
-    assert len(make_agency_hours(folder, today=PAYDAY).files) == 6
+    result = make_agency_hours(folder, today=PAYDAY)
+    assert len(result.files) == 6
+    # One that can't be opened could be anything, so it's listed rather than skipped without a word.
+    assert any("couldn't be opened" in w and "notes.xlsx" in w for w in result.warnings)
 
 
 def test_making_them_again_makes_a_new_folder(returned):

@@ -614,6 +614,7 @@ def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
         (links("{}", agencies='{"Temp": {"legal_name": "Temp Ltd."}}'), 'agencies, Temp needs "contact"'),
         (links("{}", agencies='{"Temp": {"legal_name": " ", "contact": "a@example.com"}}'), "legal_name must be the company name"),
         (links("{}", agencies='{"Temp": {"legal_name": "Temp Ltd.", "contact": "Temp office"}}'), "contact must be the email address"),
+        (links("{}", agencies='{"Temp": {"legal_name": "Temp Ltd.", "contact": "hours@"}}'), "contact must be the email address"),
         (links("{}", agencies='{"Temp": {"legal_name": "T", "contact": "a@example.com", "phone": "1"}}'), '"phone" isn\'t a setting'),
         (links("{}", pay=""), 'The file lists agencies, so it needs "agency_pay"'),
         (links("{}", pay='{"lunch_per_day": "3.00", "period_starts": "2026-03-02"}'), "lunch_per_day must be the dollars"),

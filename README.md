@@ -82,9 +82,34 @@ If that doesn't work, contact Jibble support. Until it's fixed, add their member
 - Adds comments if needed.
 - Chooses **Yes** under **Reviewed** in each employee's **Week total** row.
 
-**Step 3: accounting takes over.** Supervisors send their Excel files back to accounting, who process them from there.
+**Step 3: accounting takes over.** Supervisors send their Excel files back to accounting, who make the payroll files from them. Agency staff are paid every two weeks instead: see [Agency payday](#agency-payday).
 
 To correct a punch or a position, fix it in Jibble, export again, and start from step 1.
+
+## Payroll files
+
+Once every supervisor has sent back last week's Excel file, accounting makes one PowerPay import file per payroll.
+
+1. Save every returned Excel file for the week somewhere in one folder. Folders inside it are fine, such as one per organization. Corrections made on paper are typed into the Excel file first.
+2. Choose **Make the payroll files...** and pick that folder.
+3. Punch Clock reads every review file in it from the last full week, Monday to Sunday, and writes one `.csv` file per payroll into a new `Payroll files` folder there, with a summary of everyone's hours.
+4. In PowerPay, import each file into its payroll's run, with the Employee Timesheet custom import template. **Import first, then key holidays, sick days and vacation:** an import replaces everything already keyed in that run for each person in the file.
+5. Check the totals in PowerPay against the summary.
+
+Each file has a line of regular hours (earning code `RT`) for each person with hours that week, and a line of overtime (`OT`) for anyone who worked any, as decimals, so 7.75 is 7 hours 45 minutes. Someone with no hours isn't listed, so nothing keyed for them is replaced. Agency staff are left out. A payroll's file can include people from several Jibble organizations.
+
+It stops, and makes nothing, if:
+
+- Anyone in the files isn't linked to a payroll or an agency in the settings file. See [Who pays each employee](#who-pays-each-employee).
+- A supervisor's file for the week, or one employee, is in the folder twice. Keep only the returned one.
+- Someone paid through a payroll has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on an agency person's row doesn't hold up payroll.
+- A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
+
+When it's done, the window and the summary list anyone not marked Reviewed, any supervisor in the settings file with no file for the week, any organization with no files at all, any payroll with no one's hours that week, and any other spreadsheet in the folder that couldn't be opened.
+
+### Setting up the import in PowerPay
+
+This is done once, under **Company > Custom Import**: choose **Add Template**, pick **Employee Timesheet**, comma-delimited with a header row, and upload any file Punch Clock made as the sample. Match `employee_number` to Employee Number, `earning_code` to Earning Code, `hours` to Hours and `applicable_period` to Applicable Period (`1` is one week), and leave the rest unmatched. Each payroll run is then imported from **Payroll > Import > Custom Import**, once the run has been created.
 
 ## Agency payday
 
@@ -100,9 +125,10 @@ Each file starts with a short table of the agency's people, by the name the agen
 The hours are worked out again from each file, as for payroll, so a correction saved in a file after the first week is included. It stops, and makes nothing, if:
 
 - A supervisor's file for a week, or one employee for a week, is in the folder twice, such as the file as sent and the file as returned. Keep only the returned one.
-- A file with agency staff in it has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all.
+- Someone with an agency has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on a payroll person's row doesn't hold up the agency files.
+- A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
-When it's done, the window lists anyone not marked Reviewed, any supervisor with a file for only one of the two weeks, and anyone the settings file doesn't link to a payroll or an agency, so they can be checked before the files are sent.
+When it's done, the window lists anyone not marked Reviewed, any supervisor in the settings file with no file for a week, anyone the settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
 
 ## Who reviews whom
 
@@ -235,7 +261,7 @@ Some employees are on a different company's books from the organization they pun
 
 `name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one. Each agency is listed with where its hours go, and an organization with anyone from an agency says, in `agencies_paid_by`, which company sends them. That doesn't depend on where people punch: two organizations can name the same company.
 
-Once anyone is listed, the window and the Validation file name everyone in the reports who isn't, so a new hire can be added before payday. Agency staff are paid from these links on [Agency payday](#agency-payday). Payroll doesn't use them yet.
+Once anyone is listed, the window and the Validation file name everyone in the reports who isn't, so a new hire can be added before payday. These links decide who goes in each [payroll file](#payroll-files) and in each agency's file on [Agency payday](#agency-payday).
 
 Set `minimum_version` to `"0.11.0"` when adding them, as older versions refuse a file with them.
 

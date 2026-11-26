@@ -17,21 +17,18 @@ import shutil
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
-
-import openpyxl
+from typing import Optional
 
 from punch_clock import settings
 from punch_clock.agency_workbook import write_agency_workbook
-from punch_clock.approved_hours import ApprovedEmployee, ApprovedFile, read_approved_hours
+from punch_clock.approved_hours import ApprovedEmployee, ApprovedFile
 from punch_clock.assignments import safe_file_name
 from punch_clock.jibble_export import UnsupportedExport
-from punch_clock.review_workbook import COMPANY, DATA_SHEET, REVIEW_SHEET, WEEK_START
+from punch_clock.returned_files import check_output, day_label, missing_files, new_folder, read_returned_files, shown_path
 from punch_clock.settings import PERIOD_DAYS, Agency, organization_key
 
 FOLDER_PREFIX = "Agency hours"
 WEEKS = 2
-LABEL_ROWS = 10  # the data sheet's labels are all within its first rows
 
 
 @dataclass(frozen=True)
@@ -80,86 +77,9 @@ class AgencyResult:
         return self.start + timedelta(days=PERIOD_DAYS - 1)
 
 
-def day_label(day: date) -> str:
-    return f"{day:%b} {day.day}"
-
-
 def period_label(start: date) -> str:
     end = start + timedelta(days=PERIOD_DAYS - 1)
     return f"Mon {day_label(start)} to Sun {day_label(end)}, {end.year}"
-
-
-def _peek(path: Path) -> Optional[tuple[str, date]]:
-    """The organization and week of a review file, read quickly, or None if it isn't one."""
-    try:
-        workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    except Exception:  # not an Excel file Punch Clock can open, so not a review file
-        return None
-    try:
-        if DATA_SHEET not in workbook.sheetnames or REVIEW_SHEET not in workbook.sheetnames:
-            return None
-        labels = {}
-        for row in workbook[DATA_SHEET].iter_rows(max_row=LABEL_ROWS, max_col=2, values_only=True):
-            if row and row[0] in (COMPANY, WEEK_START):
-                labels[row[0]] = row[1] if len(row) > 1 else None
-        return str(labels[COMPANY] or ""), date.fromisoformat(str(labels[WEEK_START]))
-    except (KeyError, TypeError, ValueError):
-        return None
-    finally:
-        workbook.close()
-
-
-def find_review_files(folder: Path, weeks: Iterable[date]) -> list[Path]:
-    """Every review file in ``folder`` or below it from these weeks. Excel's own lock files are left out."""
-    weeks = set(weeks)
-    found = []
-    for path in sorted(folder.rglob("*.xlsx")):
-        if path.name.startswith("~$") or not path.is_file():
-            continue
-        about = _peek(path)
-        if about and about[1] in weeks:
-            found.append(path)
-    return found
-
-
-def _name(path: Path, folder: Path) -> str:
-    try:
-        return str(path.relative_to(folder))
-    except ValueError:
-        return str(path)
-
-
-def _check_twice(files: list[ApprovedFile], folder: Path) -> None:
-    """The same supervisor's file, or the same employee, twice in a week would pay those hours twice."""
-    seen: dict[tuple, ApprovedFile] = {}
-    for file in files:
-        for key, what in (
-            ((organization_key(file.company), file.start, file.group.casefold()), f"{file.group}'s file"),
-            *(
-                ((organization_key(file.company), file.start, employee.code.casefold()), employee.name)
-                for employee in file.employees
-            ),
-        ):
-            other = seen.setdefault(key, file)
-            if other is not file:
-                raise UnsupportedExport(
-                    f"{what} for the week of {day_label(file.start)} is in two files:\n\n"
-                    f"{_name(other.path, folder)}\n{_name(file.path, folder)}\n\n"
-                    "Keep only the one the supervisor sent back in this folder, then try again."
-                )
-
-
-def _missing_weeks(files: list[ApprovedFile], weeks: tuple[date, ...]) -> list[str]:
-    """A supervisor with a file for one week and not the other may have had one left out."""
-    found: dict[tuple[str, str], set[date]] = {}
-    for file in files:
-        found.setdefault((file.company, file.group), set()).add(file.start)
-    return [
-        f"{group} ({company}) has no file for the week of {day_label(week)}."
-        for (company, group), have in found.items()
-        for week in weeks
-        if week not in have
-    ]
 
 
 def _lunch_days(employee: ApprovedEmployee) -> int:
@@ -170,7 +90,6 @@ def _lunch_days(employee: ApprovedEmployee) -> int:
 def collect(files: list[ApprovedFile], current: settings.Settings, start: date, folder: Path) -> tuple[list[AgencyReport], list[str]]:
     """Each agency's report for the pay period, one per company sending hours, and the warnings to show."""
     weeks = tuple(start + timedelta(days=7 * week) for week in range(WEEKS))
-    _check_twice(files, folder)
     problems: list[str] = []
     unlinked: list[str] = []
     people: dict[tuple[str, str], dict] = {}  # by organization and member code
@@ -185,8 +104,10 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
                 continue
             if link.agency:
                 agency_staff.append((employee, link))
-        if agency_staff and file.problems:
-            problems += [f"{_name(file.path, folder)}:", *(f"  {problem}" for problem in file.problems)]
+        # Only the agency staff's own problems matter here. Payroll staff's are for the payroll files.
+        found = [problem for employee, _ in agency_staff for problem in employee.problems]
+        if found:
+            problems += [f"{shown_path(file.path, folder)}:", *(f"  {problem}" for problem in found)]
             continue
         for employee, link in agency_staff:
             person = people.setdefault(
@@ -197,7 +118,7 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
             person["reviewed"] = person["reviewed"] and employee.reviewed
     if problems:
         raise UnsupportedExport(
-            "These supervisor files have hours that can't be used yet, and agency staff are in them. "
+            "These supervisor files have agency staff whose hours can't be used yet. "
             "Fix these in the files, save them, and try again:\n\n" + "\n".join(problems)
         )
     if not people:
@@ -230,7 +151,7 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
         )
         for (agency, paid_by), employees in sorted(grouped.items())
     ]
-    warnings = _missing_weeks(files, weeks)
+    warnings = missing_files(files, current, weeks)
     if not_reviewed:
         warnings.append(f"Not marked Reviewed by their supervisor: {', '.join(sorted(not_reviewed, key=str.casefold))}.")
     if unlinked:
@@ -248,14 +169,6 @@ def file_name(report: AgencyReport, reports: list[AgencyReport]) -> str:
     return safe_file_name(f"{report.agency.name}{sender} {report.start} to {report.end}") + ".xlsx"
 
 
-def _new_folder(parent: Path, name: str) -> Path:
-    candidate, number = parent / name, 2
-    while candidate.exists() or candidate.with_name(candidate.name + ".tmp").exists():
-        candidate = parent / f"{name} ({number})"
-        number += 1
-    return candidate
-
-
 def make_agency_hours(folder: str | Path, today: Optional[date] = None) -> AgencyResult:
     """Read the latest pay period that has ended before ``today`` from ``folder``, and write each agency's file there."""
     folder = Path(folder)
@@ -266,18 +179,14 @@ def make_agency_hours(folder: str | Path, today: Optional[date] = None) -> Agenc
         )
     start = current.agency_pay.period_before(today or date.today())
     weeks = tuple(start + timedelta(days=7 * week) for week in range(WEEKS))
-    paths = find_review_files(folder, weeks)
-    if not paths:
-        raise UnsupportedExport(
-            f"There are no supervisor review files for {period_label(start)} in this folder or the folders inside it:"
-            f"\n\n{folder}\n\nChoose the folder that holds the files the supervisors sent back for those two weeks."
-        )
-    files = [read_approved_hours(path) for path in paths]
+    files, skipped = read_returned_files(folder, weeks, period_label(start))
     reports, warnings = collect(files, current, start, folder)
+    warnings = skipped + warnings
     if current.note:
         warnings.insert(0, current.note)
 
-    output = _new_folder(folder, f"{FOLDER_PREFIX} {start} to {start + timedelta(days=PERIOD_DAYS - 1)}")
+    output = new_folder(folder, f"{FOLDER_PREFIX} {start} to {start + timedelta(days=PERIOD_DAYS - 1)}")
+    check_output(output.with_name(output.name + ".tmp"), [file_name(report, reports) for report in reports])
     building = output.with_name(output.name + ".tmp")
     building.mkdir()
     written = []

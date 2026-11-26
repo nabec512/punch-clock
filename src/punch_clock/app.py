@@ -11,6 +11,8 @@ from typing import Callable, Optional, Sequence
 
 from punch_clock import __version__, settings, updater
 from punch_clock.agency_hours import AgencyResult, make_agency_hours, period_label
+from punch_clock.payroll_files import PayrollResult, hours_text, make_payroll_files
+from punch_clock.returned_files import week_label
 from punch_clock.assignments import departments_without_supervisor
 from punch_clock.hours import DOUBLE_PUNCH_NOTE
 from punch_clock.jibble_export import UnsupportedExport, WeeklyExport
@@ -22,6 +24,10 @@ POLL_MS = 100  # how often the window looks for background work to have finished
 
 def _employees(count: int) -> str:
     return f"{count} employee" if count == 1 else f"{count} employees"
+
+
+def _files(count: int) -> str:
+    return f"{count} supervisor file" if count == 1 else f"{count} supervisor files"
 
 
 def _missing_punches(export: WeeklyExport) -> list[str]:
@@ -96,13 +102,31 @@ def process_summary(result: ProcessResult) -> str:
     return "\n".join(lines)
 
 
+def payroll_summary(result: PayrollResult) -> str:
+    lines = [f"Done. The payroll files for {week_label(result.start)} are in this folder:", result.folder.name, ""]
+    for payroll in result.payrolls:
+        lines.append(
+            f"  {payroll.path.name}: {_employees(len(payroll.lines))}, {hours_text(payroll.regular)} regular hours, "
+            f"{hours_text(payroll.overtime)} overtime"
+        )
+    lines += [
+        "",
+        f"Read {_files(len(result.files))}. Import each file into its payroll's run in PowerPay first, then key "
+        f"holidays, sick days and vacation: an import replaces what's already keyed for the people in it. "
+        f"{result.summary.name} lists everyone, to check against PowerPay.",
+    ]
+    for warning in result.warnings:
+        lines += ["", warning]
+    return "\n".join(lines)
+
+
 def agency_summary(result: AgencyResult) -> str:
     lines = [f"Done. The agency hours for {period_label(result.start)} are in this folder:", result.folder.name, ""]
     for report, path in result.reports:
         lines.append(f"  {path.name}: {_employees(len(report.employees))}, to {report.agency.contact}")
     lines += [
         "",
-        f"Read {len(result.files)} supervisor files. Lunch is ${result.reports[0][0].lunch_per_day:.2f} for each "
+        f"Read {_files(len(result.files))}. Lunch is ${result.reports[0][0].lunch_per_day:.2f} for each "
         "scheduled day worked. For anyone who didn't buy lunch, change their Lunch days under Detail by week before sending it.",
     ]
     for warning in result.warnings:
@@ -167,12 +191,12 @@ def process_in_window(root, source: Path, working: Callable[[bool], None], finis
     _in_background(root, lambda: process_export(source), done)
 
 
-def choose_returned_folder(parent) -> Optional[Path]:
+def choose_returned_folder(parent, weeks: str) -> Optional[Path]:
     from tkinter import filedialog
 
     chosen = filedialog.askdirectory(
         parent=parent,
-        title="Choose the folder with the supervisors' files for the last two weeks",
+        title=f"Choose the folder with the supervisors' files for {weeks}",
         mustexist=True,
     )
     return Path(chosen) if chosen else None
@@ -273,11 +297,11 @@ def run_window() -> int:
 
     root = tk.Tk()
     root.title(f"{APP_NAME} {__version__}")
-    root.minsize(520, 440)
+    root.minsize(520, 500)
     frame = ttk.Frame(root, padding=16)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(0, weight=1)
-    frame.rowconfigure(5, weight=1)
+    frame.rowconfigure(7, weight=1)
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
     settings_location = tk.StringVar(value=f"Settings file: {settings.file_path()}")
     last_folder: dict[str, Path] = {}
@@ -298,7 +322,7 @@ def run_window() -> int:
     def show_working(working: bool) -> None:
         nonlocal making_reports
         making_reports = working
-        for button in (process_button, agency_button, settings_button):
+        for button in (process_button, payroll_button, agency_button, settings_button):
             button.state(["disabled" if working else "!disabled"])
         if working:
             progress.grid()
@@ -330,31 +354,40 @@ def run_window() -> int:
 
         process_in_window(root, source, show_working, finished)
 
-    def on_agency() -> None:
-        nonlocal busy
-        busy = True
-        folder = choose_returned_folder(root)
-        if not folder:
-            busy = False
-            return
-        before = status.get()
-        status.set("Reading the supervisors' files and making the agency hours...")
+    def from_returned_files(weeks: str, making: str, make: Callable, summary: Callable) -> Callable[[], None]:
+        """A button that reads the supervisors' returned files in a folder, and makes what's sent on from them."""
 
-        def done(result: Optional[AgencyResult], error: Optional[Exception]) -> None:
+        def run() -> None:
             nonlocal busy
-            busy = False
-            show_working(False)
-            if error:
-                _show_error(root, error)
-                status.set(before)
+            busy = True
+            try:
+                folder = choose_returned_folder(root, weeks)
+            except BaseException:
+                busy = False  # or an update would never be offered
+                raise
+            if not folder:
+                busy = False
                 return
-            status.set(agency_summary(result))
-            last_folder["path"] = result.folder
-            open_button.state(["!disabled"])
-            os.startfile(result.folder)
+            before = status.get()
+            status.set(f"Reading the supervisors' files and making the {making}...")
 
-        show_working(True)
-        _in_background(root, lambda: make_agency_hours(folder), done)
+            def done(result, error: Optional[Exception]) -> None:
+                nonlocal busy
+                busy = False
+                show_working(False)
+                if error:
+                    _show_error(root, error)
+                    status.set(before)
+                    return
+                status.set(summary(result))
+                last_folder["path"] = result.folder
+                open_button.state(["!disabled"])
+                os.startfile(result.folder)
+
+            show_working(True)
+            _in_background(root, lambda: make(folder), done)
+
+        return run
 
     def on_close() -> None:
         if not making_reports:  # closing part-way would leave a half-made folder behind
@@ -368,23 +401,34 @@ def run_window() -> int:
     ttk.Label(frame, text="When you have this week's file from Jibble:").grid(row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
     process_button.grid(row=1, column=0, sticky="ew", pady=(4, 12))
-    ttk.Label(frame, text="On agency payday, for the last two weeks:").grid(row=2, column=0, sticky="w")
-    agency_button = ttk.Button(frame, text="Make the agency hours...", command=on_agency)
-    agency_button.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+    ttk.Label(frame, text="When the supervisors have sent back last week's files:").grid(row=2, column=0, sticky="w")
+    payroll_button = ttk.Button(
+        frame,
+        text="Make the payroll files...",
+        command=from_returned_files("last week", "payroll files", make_payroll_files, payroll_summary),
+    )
+    payroll_button.grid(row=3, column=0, sticky="ew", pady=(4, 12))
+    ttk.Label(frame, text="On agency payday, for the last two weeks:").grid(row=4, column=0, sticky="w")
+    agency_button = ttk.Button(
+        frame,
+        text="Make the agency hours...",
+        command=from_returned_files("the last two weeks", "agency hours", make_agency_hours, agency_summary),
+    )
+    agency_button.grid(row=5, column=0, sticky="ew", pady=(4, 12))
     progress = ttk.Progressbar(frame, mode="indeterminate")  # moves while the reports are being made
-    progress.grid(row=4, column=0, sticky="ew", pady=(0, 12))
+    progress.grid(row=6, column=0, sticky="ew", pady=(0, 12))
     progress.grid_remove()
-    ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=5, column=0, sticky="nsew")
-    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=6, column=0, sticky="w", pady=(12, 0))
+    ttk.Label(frame, textvariable=status, wraplength=480, justify="left", anchor="nw").grid(row=7, column=0, sticky="nsew")
+    ttk.Label(frame, textvariable=settings_location, wraplength=480, justify="left").grid(row=8, column=0, sticky="w", pady=(12, 0))
     bottom = ttk.Frame(frame)
-    bottom.grid(row=7, column=0, sticky="ew", pady=(8, 0))
+    bottom.grid(row=9, column=0, sticky="ew", pady=(8, 0))
     settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
     settings_button.pack(side="left")
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
     open_button.state(["disabled"])
     open_button.pack(side="right")
     if updater.is_packaged():
-        _offer_update(root, status, [process_button, agency_button, settings_button], lambda: busy)
+        _offer_update(root, status, [process_button, payroll_button, agency_button, settings_button], lambda: busy)
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
     return 0

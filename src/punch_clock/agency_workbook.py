@@ -43,7 +43,8 @@ def _hours(minutes: int) -> float:
 
 
 def write_agency_workbook(report: "AgencyReport", path: Path) -> None:
-    from punch_clock.agency_hours import day_label, period_label
+    from punch_clock.agency_hours import period_label
+    from punch_clock.returned_files import day_label
 
     workbook = xlsxwriter.Workbook(str(path))
     make = workbook.add_format
@@ -67,10 +68,11 @@ def write_agency_workbook(report: "AgencyReport", path: Path) -> None:
     sheet.set_column(0, 0, 32)
     sheet.set_column(1, len(weeks) * WEEK_COLUMNS, 12)
     sheet.write(0, 0, "TO:", bold)
-    sheet.write(1, 0, report.agency.legal_name, bold)
-    sheet.write(2, 0, report.agency.contact)
+    # Names come from people, so they're written as text even if one starts with =.
+    sheet.write_string(1, 0, report.agency.legal_name, bold)
+    sheet.write_string(2, 0, report.agency.contact)
     sheet.write(4, 0, "FROM:", bold)
-    sheet.write(5, 0, report.paid_by, bold)
+    sheet.write_string(5, 0, report.paid_by, bold)
     sheet.write(7, 0, "Pay period:", bold)
     sheet.write(7, 1, period_label(report.start))
     rate = f"{report.lunch_per_day:.2f}"
@@ -88,7 +90,7 @@ def write_agency_workbook(report: "AgencyReport", path: Path) -> None:
     detail_rows = []
     for row, employee in enumerate(employees, start=detail + 2):
         detail_rows.append(row)
-        sheet.write(row, 0, employee.name, name)
+        sheet.write_string(row, 0, employee.name, name)
         for index, week in enumerate(employee.weeks):
             first_column = 1 + WEEK_COLUMNS * index
             sheet.write_number(row, first_column, _hours(week.regular), hours)
@@ -101,7 +103,7 @@ def write_agency_workbook(report: "AgencyReport", path: Path) -> None:
     first = HEADER_ROW + 1
     cached_totals = [0.0, 0.0, 0.0]
     for row, employee, source in zip(range(first, first + len(employees)), employees, detail_rows):
-        sheet.write(row, 0, employee.name, name)
+        sheet.write_string(row, 0, employee.name, name)
 
         def across_weeks(offset: int) -> str:
             return "+".join(xl_rowcol_to_cell(source, 1 + WEEK_COLUMNS * index + offset) for index in range(len(weeks)))
