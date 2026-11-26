@@ -10,7 +10,7 @@ from test_review_flow import Sheet
 from punch_clock import reports, settings
 from punch_clock.app import payroll_summary
 from punch_clock.jibble_export import UnsupportedExport
-from punch_clock.payroll_files import last_full_week, make_payroll_files
+from punch_clock.payroll_files import last_full_week, make_payroll_files, plain_name
 from punch_clock.reports import REVIEW_FOLDER, process_export
 from punch_clock.review_workbook import ADJUSTMENT, REVIEWED, WEEK_TOTAL
 
@@ -82,10 +82,11 @@ def test_each_payroll_gets_its_peoples_regular_and_overtime_hours(returned):
         "Main Payroll 2026-03-02.csv", "Payroll summary 2026-03-02.txt", "Second Payroll 2026-03-02.csv",
     ]
     # Fay had no hours, so she isn't listed and nothing keyed for her is replaced. Ann is with an agency.
-    assert read(result.folder / "Main Payroll 2026-03-02.csv") == ["employee_number,earning_code,hours,applicable_period", "7,RT,40.00,1"]
+    header = "employee_name,employee_number,earning_code,hours,applicable_period"
+    assert read(result.folder / "Main Payroll 2026-03-02.csv") == [header, "STAFF CY,7,RT,40.00,1"]
     # An hour on Monday and five on Saturday.
     assert read(result.folder / "Second Payroll 2026-03-02.csv") == [
-        "employee_number,earning_code,hours,applicable_period", "12,RT,40.00,1", "12,OT,6.00,1",
+        header, "STAFF EVE,12,RT,40.00,1", "STAFF EVE,12,OT,6.00,1",
     ]
     assert [(p.payroll, p.regular, p.overtime) for p in result.payrolls] == [("Main Payroll", 2400, 0), ("Second Payroll", 2400, 360)]
     assert "No one has hours this week in: Third Payroll, so there's no file for it." in result.warnings
@@ -110,7 +111,7 @@ def test_hours_come_from_what_the_supervisor_approved(returned):
     sheet = Sheet(review_file(week, "Bea Boss"))
     sheet.set("Eve Staff", WEEK_START, ADJUSTMENT, -60).set("Eve Staff", WEEK_TOTAL, REVIEWED, "Yes").save()
     result = make_payroll_files(folder, today=NEXT_WEDNESDAY)
-    assert read(result.folder / "Second Payroll 2026-03-02.csv")[1:] == ["12,RT,40.00,1", "12,OT,5.00,1"]
+    assert read(result.folder / "Second Payroll 2026-03-02.csv")[1:] == ["STAFF EVE,12,RT,40.00,1", "STAFF EVE,12,OT,5.00,1"]
     assert "STAFF, EVE" not in next(w for w in result.warnings if w.startswith("Not marked Reviewed"))
 
 
@@ -258,3 +259,29 @@ def test_a_folder_too_deep_for_excel_is_refused(returned, monkeypatch):
     with pytest.raises(UnsupportedExport, match="too long for Windows and Excel"):
         make_payroll_files(folder, today=NEXT_WEDNESDAY)
     assert not list(folder.glob("Payroll files*"))
+
+
+@pytest.mark.parametrize(
+    "written, plain",
+    [
+        ("STAFF, EVE", "STAFF EVE"),
+        ("ŻAK, ŁUCJA", "ZAK LUCJA"),
+        ("Gómez-Peña, José", "Gomez-Pena Jose"),
+        ("O'Brien,  Zoë", "O'Brien Zoe"),
+        ("Søren Æsir", "Soren AEsir"),
+        ('Lee "Junior" (night)', "Lee Junior night"),
+        ("Strauß; Müller", "Strauss Muller"),
+    ],
+)
+def test_names_in_the_import_file_are_plain_letters_without_commas(written, plain):
+    assert plain_name(written) == plain
+    assert plain.isascii() and "," not in plain
+
+
+def test_accented_names_reach_the_file_in_plain_letters(returned):
+    folder, _ = returned
+    employees = {**EMPLOYEES, "CS-1": {"name": "ŻAK, ŁUCJA", "payroll": "Main Payroll", "number": "7"}}
+    setup_settings(employees)
+    result = make_payroll_files(folder, today=NEXT_WEDNESDAY)
+    assert read(result.folder / "Main Payroll 2026-03-02.csv")[1] == "ZAK LUCJA,7,RT,40.00,1"
+    assert "ŻAK, ŁUCJA" in result.summary.read_text(encoding="utf-8")

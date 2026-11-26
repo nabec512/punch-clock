@@ -96,7 +96,7 @@ Once every supervisor has sent back last week's Excel file, accounting makes one
 4. In PowerPay, import each file into its payroll's run, with the Employee Timesheet custom import template. **Import first, then key holidays, sick days and vacation:** an import replaces everything already keyed in that run for each person in the file.
 5. Check the totals in PowerPay against the summary.
 
-Each file has a line of regular hours (earning code `RT`) for each person with hours that week, and a line of overtime (`OT`) for anyone who worked any, as decimals, so 7.75 is 7 hours 45 minutes. Someone with no hours isn't listed, so nothing keyed for them is replaced. Agency staff are left out. A payroll's file can include people from several Jibble organizations.
+Each line starts with the person's name, so accounting can tell who it is. PowerPay ignores it, and it's written in plain letters, without accents or commas, as the import may not handle them: `ŻAK, ŁUCJA` becomes `ZAK LUCJA`. The summary keeps names as written. Each file has a line of regular hours (earning code `RT`) for each person with hours that week, and a line of overtime (`OT`) for anyone who worked any, as decimals, so 7.75 is 7 hours 45 minutes. Someone with no hours isn't listed, so nothing keyed for them is replaced. Agency staff are left out. A payroll's file can include people from several Jibble organizations.
 
 It stops, and makes nothing, if:
 
@@ -109,7 +109,7 @@ When it's done, the window and the summary list anyone not marked Reviewed, any 
 
 ### Setting up the import in PowerPay
 
-This is done once, under **Company > Custom Import**: choose **Add Template**, pick **Employee Timesheet**, comma-delimited with a header row, and upload any file Punch Clock made as the sample. Match `employee_number` to Employee Number, `earning_code` to Earning Code, `hours` to Hours and `applicable_period` to Applicable Period (`1` is one week), and leave the rest unmatched. Each payroll run is then imported from **Payroll > Import > Custom Import**, once the run has been created.
+This is done once, under **Company > Custom Import**: choose **Add Template**, pick **Employee Timesheet**, comma-delimited with a header row, and upload any file Punch Clock made as the sample. Match `employee_number` to Employee Number, `earning_code` to Earning Code, `hours` to Hours and `applicable_period` to Applicable Period (`1` is one week), and leave the rest unmatched, including `employee_name`. Each payroll run is then imported from **Payroll > Import > Custom Import**, once the run has been created.
 
 ## Agency payday
 

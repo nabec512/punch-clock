@@ -17,7 +17,9 @@ each payroll's people and totals, to check against PowerPay after the import.
 from __future__ import annotations
 
 import csv
+import re
 import shutil
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,7 +33,12 @@ from punch_clock.returned_files import check_output, missing_files, new_folder, 
 
 FOLDER_PREFIX = "Payroll files"
 # The columns of the import template set up in PowerPay. They must match it exactly.
-COLUMNS = ("employee_number", "earning_code", "hours", "applicable_period")
+# employee_name is left unmatched, so PowerPay ignores it: it's there so accounting can tell who each line is.
+COLUMNS = ("employee_name", "employee_number", "earning_code", "hours", "applicable_period")
+# Letters that don't come apart into a plain letter and an accent.
+PLAIN_LETTERS = str.maketrans({
+    "ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D", "ß": "ss", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE",
+})
 REGULAR_CODE, OVERTIME_CODE = "RT", "OT"  # PowerPay's earning codes, the same on every payroll
 WEEKLY = "1"  # PowerPay's applicable period for part or all of one week
 
@@ -74,6 +81,15 @@ class PayrollResult:
 def last_full_week(today: date) -> date:
     """The Monday of the latest Monday-to-Sunday week that has ended before ``today``."""
     return today - timedelta(days=today.weekday() + 7)
+
+
+def plain_name(name: str) -> str:
+    """A name in plain letters, digits, spaces, hyphens and apostrophes, as PowerPay's import says nothing about
+    accents or quoted commas: "ŻAK, ŁUCJA" becomes "ZAK LUCJA"."""
+    letters = unicodedata.normalize("NFKD", name.translate(PLAIN_LETTERS))
+    ascii_only = letters.encode("ascii", "ignore").decode("ascii")
+    kept = re.sub(r"[^A-Za-z0-9 '\-]", " ", ascii_only)
+    return " ".join(kept.split())
 
 
 def hours_text(minutes: int) -> str:
@@ -125,14 +141,16 @@ def collect(files: list[ApprovedFile], current: settings.Settings, folder: Path)
 
 
 def _write_csv(path: Path, lines: list[PayrollLine]) -> None:
-    with open(path, "w", encoding="utf-8", newline="") as stream:
+    # Plain ASCII, with nothing that needs quoting, as the import's handling of anything else isn't documented.
+    with open(path, "w", encoding="ascii", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(COLUMNS)
         for line in lines:
+            name = plain_name(line.name)
             if line.regular:
-                writer.writerow((line.number, REGULAR_CODE, hours_text(line.regular), WEEKLY))
+                writer.writerow((name, line.number, REGULAR_CODE, hours_text(line.regular), WEEKLY))
             if line.overtime:
-                writer.writerow((line.number, OVERTIME_CODE, hours_text(line.overtime), WEEKLY))
+                writer.writerow((name, line.number, OVERTIME_CODE, hours_text(line.overtime), WEEKLY))
 
 
 def summary_text(start: date, payrolls: list[PayrollFile], files: list[ApprovedFile], warnings: list[str], folder: Path) -> str:

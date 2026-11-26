@@ -36,7 +36,7 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 
 ## PowerPay import layout
 
-PowerPay's custom import is set up once per company as an Employee Timesheet template, built from a sample file: comma-separated, with a header row. Punch Clock writes these columns, matched in the template to the PowerPay field in brackets: employee_number (Employee Number), earning_code (Earning Code), hours (Hours), applicable_period (Applicable Period, 1 for part or all of one week). One line per employee per earning code, with hours as decimals to two places.
+PowerPay's custom import is set up once per company as an Employee Timesheet template, built from a sample file: comma-separated, with a header row. Punch Clock writes these columns, matched in the template to the PowerPay field in brackets: employee_name (left unmatched, so accounting can tell who each line is; plain ASCII with no commas, as the guides don't say how quotes or accents are handled), employee_number (Employee Number), earning_code (Earning Code), hours (Hours), applicable_period (Applicable Period, 1 for part or all of one week). One line per employee per earning code, with hours as decimals to two places.
 
 From PowerPay's File Import Guide: an import replaces every timesheet entry already in that payroll run for each employee it lists, including anything keyed by hand, and leaves everyone else alone. So the file must hold each employee's complete hours, and accounting imports first, then keys stat holidays (XT), sick days (QT) and vacation. Importing again replaces the earlier import. A line with a mistake, such as an unknown employee number, is skipped on its own.
 
