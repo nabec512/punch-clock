@@ -13,20 +13,23 @@ The file is edited by hand, so anything in it the app doesn't recognise is refus
 ignored: a misspelled setting would otherwise quietly change someone's pay. Every PC reads the
 same file, so it can also name the oldest version of the app allowed to use it.
 
-It also says who pays each employee: a payroll, with their employee number there, or a staffing
-agency. That follows the company on the books, not the organization they punch in, so each
+Who pays each employee is in a second file, the accounting settings, kept where only accounting
+can open it, as it holds everyone's payroll and employee numbers. Department supervisors' PCs never
+read it: the weekly reports don't need it. It says, for each employee, a payroll with their
+employee number there, or a staffing agency. That follows the company on the books, not the organization they punch in, so each
 employee is linked one by one. The payrolls and agencies are listed once at the top, so that a
 misspelled one is caught instead of becoming a payroll of its own. Each agency is listed with the
 company name and email its hours are sent to, and ``agency_pay`` holds the lunch charged per day
 and the start of one two-week agency pay period. Each organization with agency staff says which
-company sends those people's hours to the agency.
+company sends those people's hours to the agency. It's never copied to a PC to fall back on: if it
+can't be reached, the steps that need it stop.
 """
 from __future__ import annotations
 
 import json
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Optional
@@ -46,6 +49,10 @@ AGENCY_PAY = "agency_pay"
 AGENCIES_PAID_BY = "agencies_paid_by"
 PAYROLL_RUNS = "payroll_runs"
 ACCOUNTING_FOLDER = "accounting_folder"
+EMPLOYEES = "employees"
+# What goes in the accounting settings file, and never in the shared one.
+ACCOUNTING_SETTINGS = (PAYROLLS, AGENCIES, AGENCY_PAY, PAYROLL_RUNS, ACCOUNTING_FOLDER)
+ACCOUNTING_ORGANIZATION_SETTINGS = (EMPLOYEES, AGENCIES_PAID_BY)
 PERIOD_DAYS = 14  # agency staff are paid every two weeks
 ORGANIZATION_SECTIONS = ("supervisors", "department_schedules", "member_schedules")
 
@@ -111,6 +118,7 @@ class Settings:
     # Where returned files are kept and payroll and agency files are made, on a share only accounting can open.
     # None until it's set up, when each of those steps asks for a folder instead.
     accounting_folder: Optional[Path] = None
+    accounting_path: Optional[Path] = None  # the accounting settings file these came from, if they did
 
     def payrolls_in(self, run: Optional[str]) -> tuple[str, ...]:
         """The payrolls that anyone in this run's organizations is paid through, or every payroll."""
@@ -199,6 +207,12 @@ def location_path() -> Path:
     return _app_data() / "settings-location.txt"
 
 
+def role_path() -> Path:
+    """Which steps this PC's window shows. Only a convenience: what keeps pay data private is who can open the
+    accounting settings file and folder."""
+    return _app_data() / "role.txt"
+
+
 def file_path() -> Path:
     """Where this PC was told the settings file is, or else the home folder."""
     try:
@@ -280,13 +294,11 @@ def _no_repeats(pairs: list[tuple[str, object]]) -> dict:
     return dict(pairs)
 
 
-def _organization(
-    name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str], numbers: dict[tuple[str, int], tuple[str, str]]
-) -> Organization:
-    entry = _known(
-        entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments", "employees", AGENCIES_PAID_BY),
-        may_be_empty=True,
-    )
+def _organization(name: str, entry: object) -> Organization:
+    moved = [setting for setting in ACCOUNTING_ORGANIZATION_SETTINGS if isinstance(entry, dict) and setting in entry]
+    if moved:
+        raise _belongs_in_accounting(f"{name}: {', '.join(moved)}")
+    entry = _known(entry, name, ORGANIZATION_SECTIONS, ("weekend_schedule", "member_departments"), may_be_empty=True)
     supervisors = _section(entry["supervisors"], f"{name}, supervisors")
     if not all(isinstance(person, str) for person in supervisors.values()):
         raise LayoutMistake(f"{name}: each supervisor must be a name in quotes, or blank.")
@@ -294,7 +306,27 @@ def _organization(
     departments = _section(entry["department_schedules"], f"{name}, department_schedules")
     members = _section(entry["member_schedules"], f"{name}, member_schedules")
     known = {_key(department): department.strip() for department in (*departments, *supervisors)}
-    employees = _pay_links(entry.get("employees", {}), f"{name}, employees", payrolls, agencies, numbers)
+    return Organization(
+        name,
+        {department.strip(): person for department, person in supervisors.items()},
+        {_key(department): _schedule(hours, f"{name}, {department.strip()}", weekend) for department, hours in departments.items()},
+        {_key(code): _schedule(hours, f"{name}, {code.strip()}", weekend) for code, hours in members.items()},
+        _member_departments(entry.get("member_departments", {}), f"{name}, member_departments", known),
+    )
+
+
+def _belongs_in_accounting(what: str) -> LayoutMistake:
+    return LayoutMistake(
+        f"{what} belongs in the accounting settings file, not this one, as it's only for accounting to see. Move it "
+        "there, under the same organization's name."
+    )
+
+
+def _pay_section(name: str, entry: object, payrolls: dict[str, str], agencies: dict[str, str],
+                 numbers: dict[tuple[str, int], tuple[str, str]]) -> tuple[dict[str, PayLink], str]:
+    """An organization's section of the accounting settings file: who pays each member, and who sends agency hours."""
+    entry = _known(entry, name, (), ACCOUNTING_ORGANIZATION_SETTINGS)
+    employees = _pay_links(entry.get(EMPLOYEES, {}), f"{name}, {EMPLOYEES}", payrolls, agencies, numbers)
     paid_by = entry.get(AGENCIES_PAID_BY)
     if paid_by is not None and (not isinstance(paid_by, str) or not paid_by.strip()):
         raise LayoutMistake(f"{name}: {AGENCIES_PAID_BY} must be a company name in quotes.")
@@ -303,15 +335,7 @@ def _organization(
             f'{name} has employees from an agency, so it needs "{AGENCIES_PAID_BY}": the name of the company that '
             "sends their hours to the agency, in quotes."
         )
-    return Organization(
-        name,
-        {department.strip(): person for department, person in supervisors.items()},
-        {_key(department): _schedule(hours, f"{name}, {department.strip()}", weekend) for department, hours in departments.items()},
-        {_key(code): _schedule(hours, f"{name}, {code.strip()}", weekend) for code, hours in members.items()},
-        _member_departments(entry.get("member_departments", {}), f"{name}, member_departments", known),
-        employees,
-        " ".join(paid_by.split()) if paid_by else "",
-    )
+    return employees, " ".join(paid_by.split()) if paid_by else ""
 
 
 def _names(value: object, section: str) -> dict[str, str]:
@@ -465,7 +489,7 @@ def _check_version(wanted: object) -> None:
         raise NeedsNewerApp(".".join(str(number) for number in needed))
 
 
-def _parse(data: bytes, path: Path, note: str = "") -> Settings:
+def _json(data: bytes) -> dict:
     """Accepts the byte order mark Notepad can add."""
     try:
         settings = json.loads(data.decode("utf-8-sig"), object_pairs_hook=_no_repeats)
@@ -481,12 +505,30 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
         raise LayoutMistake("It should start with { and end with }.")
     # First, so that an older app asks to be updated instead of calling a newer setting a mistake.
     _check_version(settings.get(MINIMUM_VERSION))
+    return settings
+
+
+def _parse(data: bytes, path: Path, note: str = "") -> Settings:
+    """The shared settings file: organizations, supervisors and schedules."""
+    settings = _json(data)
     if "organizations" not in settings and "supervisors" in settings:
         raise LayoutMistake(
             "It's laid out the old way, for a single organization. Put each organization's supervisors, "
             "department_schedules and member_schedules in a section of its own under organizations."
         )
-    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION, PAYROLLS, AGENCIES, AGENCY_PAY, PAYROLL_RUNS, ACCOUNTING_FOLDER))
+    moved = [setting for setting in ACCOUNTING_SETTINGS if setting in settings]
+    if moved:
+        raise _belongs_in_accounting(", ".join(moved))
+    _known(settings, "The file", ("organizations",), (MINIMUM_VERSION,))
+    sections = _section(settings["organizations"], "organizations")
+    organizations = {organization_key(name): _organization(name, entry) for name, entry in sections.items()}
+    return Settings(organizations, path, note)
+
+
+def _parse_accounting(data: bytes, path: Path, shared: Settings) -> Settings:
+    """The accounting settings file, added to the shared settings it goes with."""
+    settings = _json(data)
+    _known(settings, "The file", (), ("organizations", MINIMUM_VERSION, *ACCOUNTING_SETTINGS))
     payrolls = _names(settings.get(PAYROLLS, []), PAYROLLS)
     agency_list = _agencies(settings.get(AGENCIES, {}))
     agencies = {key: agency.name for key, agency in agency_list.items()}
@@ -496,19 +538,26 @@ def _parse(data: bytes, path: Path, note: str = "") -> Settings:
         )
     agency_pay = _agency_pay(settings[AGENCY_PAY]) if AGENCY_PAY in settings else None
     numbers: dict[tuple[str, int], tuple[str, str]] = {}
-    sections = _section(settings["organizations"], "organizations")
-    organizations = {
-        organization_key(name): _organization(name, entry, payrolls, agencies, numbers) for name, entry in sections.items()
-    }
-    return Settings(
-        organizations,
-        path,
-        note,
-        tuple(payrolls.values()),
-        {a.name: a for a in agency_list.values()},
-        agency_pay,
-        _payroll_runs(settings.get(PAYROLL_RUNS, {}), organizations),
-        _accounting_folder(settings.get(ACCOUNTING_FOLDER)),
+    organizations = dict(shared.organizations)
+    for name, entry in _section(settings.get("organizations", {}), "organizations").items():
+        key = organization_key(name)
+        if key not in organizations:
+            listed = ", ".join(o.name for o in shared.organizations.values()) or "none"
+            raise LayoutMistake(
+                f'"{name.strip()}" isn\'t one of the organizations in the shared settings file, so check its spelling. '
+                f"Organizations there: {listed}."
+            )
+        employees, paid_by = _pay_section(name, entry, payrolls, agencies, numbers)
+        organizations[key] = replace(organizations[key], employees=employees, agencies_paid_by=paid_by)
+    return replace(
+        shared,
+        organizations=organizations,
+        payrolls=tuple(payrolls.values()),
+        agencies={a.name: a for a in agency_list.values()},
+        agency_pay=agency_pay,
+        payroll_runs=_payroll_runs(settings.get(PAYROLL_RUNS, {}), organizations),
+        accounting_folder=_accounting_folder(settings.get(ACCOUNTING_FOLDER)),
+        accounting_path=path,
     )
 
 
@@ -559,19 +608,19 @@ def _payroll_runs(value: object, organizations: dict[str, Organization]) -> dict
     return runs
 
 
-def _checked(data: bytes, path: Path) -> Settings:
+def _checked(data: bytes, path: Path, parse=None, which: str = "settings file") -> Settings:
     try:
-        return _parse(data, path)
+        return (parse or _parse)(data, path)
     except NeedsNewerApp as error:
         raise UnsupportedExport(
-            f"The settings file needs Punch Clock {error} or newer, and this PC has {__version__}:\n\n{path}\n\n"
+            f"The {which} needs Punch Clock {error} or newer, and this PC has {__version__}:\n\n{path}\n\n"
             "Close Punch Clock and open it again, and choose Yes when it offers to update. Then make the reports again. "
             "If it doesn't offer, install the latest version over this one."
         ) from error
     except LayoutMistake as error:
-        raise UnsupportedExport(f"The settings file has a mistake in it:\n\n{path}\n\n{error}") from error
+        raise UnsupportedExport(f"The {which} has a mistake in it:\n\n{path}\n\n{error}") from error
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        raise UnsupportedExport(f"The settings file has a mistake in it:\n\n{path}\n\nDetails: {error!r}") from error
+        raise UnsupportedExport(f"The {which} has a mistake in it:\n\n{path}\n\nDetails: {error!r}") from error
 
 
 def _read_file(path: Path) -> Optional[bytes]:
@@ -628,6 +677,83 @@ def load() -> Settings:
     settings = _checked(data, path)
     _save_copy(data)
     return settings
+
+
+def accounting_location_path() -> Path:
+    return _app_data() / "accounting-settings-location.txt"
+
+
+def accounting_file_path() -> Optional[Path]:
+    """Where this PC was told the accounting settings file is. A department supervisor's PC has none."""
+    try:
+        chosen = accounting_location_path().read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        chosen = ""
+    return Path(chosen) if chosen else None
+
+
+ACCOUNTING_WHICH = "accounting settings file"
+
+
+def _read_accounting(path: Path, shared: Settings) -> Settings:
+    data = _read_file(path)
+    if data is None:
+        raise UnsupportedExport(
+            f"The accounting settings file can't be reached:\n\n{path}\n\nCheck that this PC is connected to the "
+            "accounting server, then try again."
+        )
+    return _checked(data, path, lambda data, path: _parse_accounting(data, path, shared), ACCOUNTING_WHICH)
+
+
+def load_accounting(shared: Settings) -> Settings:
+    """The shared settings with the accounting settings added, for the steps that pay people.
+
+    Never from a copy kept on this PC: who is paid what stays on the accounting server.
+    """
+    path = accounting_file_path()
+    if path is None:
+        raise UnsupportedExport(
+            "This PC hasn't been shown where the accounting settings file is. Choose Accounting settings file..., "
+            "and pick it on the accounting server."
+        )
+    return _read_accounting(path, shared)
+
+
+def load_full() -> Settings:
+    """Both settings files, for receiving returned files and making payroll and agency files."""
+    return load_accounting(load())
+
+
+def use_accounting_file(path: Path) -> Settings:
+    """Remember this accounting settings file for this PC, as long as it can be read and has no mistakes."""
+    settings = _read_accounting(path, load())
+    location = accounting_location_path()
+    location.parent.mkdir(parents=True, exist_ok=True)
+    location.write_text(str(path), encoding="utf-8")
+    return settings
+
+
+def split_settings(combined: dict) -> tuple[dict, dict]:
+    """A settings file from before the split, as the shared and accounting files it becomes."""
+    shared, accounting = {}, {}
+    for key, value in combined.items():
+        if key in ACCOUNTING_SETTINGS:
+            accounting[key] = value
+        elif key == "organizations" and isinstance(value, dict):
+            shared["organizations"], pay = {}, {}
+            for name, entry in value.items():
+                entry = dict(entry) if isinstance(entry, dict) else entry
+                moved = {k: entry.pop(k) for k in ACCOUNTING_ORGANIZATION_SETTINGS if isinstance(entry, dict) and k in entry}
+                shared["organizations"][name] = entry
+                if moved:
+                    pay[name] = moved
+            if pay:
+                accounting["organizations"] = pay
+        else:
+            shared[key] = value
+    if MINIMUM_VERSION in combined and accounting:
+        accounting = {MINIMUM_VERSION: combined[MINIMUM_VERSION], **accounting}
+    return shared, accounting
 
 
 def use_file(path: Path) -> Settings:

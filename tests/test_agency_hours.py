@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 import openpyxl
 import pytest
-from sample_export import COMPANY, WEEK_START, Person, agency_details, build_workbook, organization, write_settings
+from sample_export import COMPANY, WEEK_START, Person, agency_details, build_workbook, organization, update_accounting, write_settings
 from test_review_flow import Sheet
 
 from punch_clock import settings
@@ -266,6 +266,7 @@ def test_people_the_settings_dont_link_are_listed(returned):
 def test_settings_without_agencies_are_refused(returned):
     folder, _ = returned
     write_settings(settings.file_path(), {"Paint": "Bea Boss"})
+    update_accounting(settings.file_path())  # an accounting settings file with nothing in it yet
     with pytest.raises(UnsupportedExport, match="doesn't list any agencies yet"):
         make_agency_hours(folder, today=PAYDAY)
 

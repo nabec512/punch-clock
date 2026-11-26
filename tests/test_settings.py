@@ -1,4 +1,5 @@
 """The settings file, where it is, and the copy saved on this PC. All values are fictional."""
+import json
 import threading
 from datetime import date, time
 from pathlib import Path
@@ -552,10 +553,20 @@ def links(
         f', "{key}": {value}' for key, value in (("payrolls", payrolls), ("agencies", agencies), ("agency_pay", pay)) if value
     )
     sender = f', "agencies_paid_by": {paid_by}' if paid_by else ""
-    organization = (
-        '"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {}, "employees": %s%s}' % (employees, sender)
-    )
-    return '{"organizations": {%s}%s}' % (organization, top)
+    return '{"organizations": {"Org": {"employees": %s%s}}%s}' % (employees, sender, top)
+
+
+def mistake_in_accounting(text):
+    """``text`` as the accounting settings file, beside a shared one with an organization called Org."""
+    settings.file_path().write_text(section(), encoding="utf-8")
+    accounting = settings.file_path().with_name("accounting.json")
+    accounting.write_text(text, encoding="utf-8")
+    settings.accounting_location_path().parent.mkdir(parents=True, exist_ok=True)
+    settings.accounting_location_path().write_text(str(accounting), encoding="utf-8")
+    with pytest.raises(UnsupportedExport, match="The accounting settings file has a mistake in it") as stopped:
+        settings.load_full()
+    assert "Details" not in str(stopped.value)
+    return str(stopped.value)
 
 
 def test_who_pays_is_optional():
@@ -576,8 +587,8 @@ def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
         payrolls=["Main Payroll", "Second Payroll"],
         agencies=["Temp Staffing Inc."],
     )
-    loaded = settings.load()
-    assert loaded.links_pay
+    loaded = settings.load_full()
+    assert loaded.links_pay and not settings.load().links_pay
     assert loaded.payrolls == ("Main Payroll", "Second Payroll")
     assert loaded.agencies == {
         "Temp Staffing Inc.": settings.Agency("Temp Staffing Inc.", "Temp Staffing Inc. Holdings", "hours@example.com")
@@ -630,11 +641,70 @@ def test_each_employee_is_linked_to_a_payroll_number_or_an_agency():
         (links("{}", paid_by="7"), "agencies_paid_by must be a company name in quotes"),
         (links("{}", payrolls='["Main Payroll", "main  payroll"]'), '"main  payroll" is listed twice'),
         ('{"organizations": {}, "payroll": []}', '"payroll" isn\'t a setting'),
-        (section(extra=', "employee": {}'), '"employee" isn\'t a setting'),
+        ('{"organizations": {"Org": {"employee": {}}}}', '"employee" isn\'t a setting'),
+        ('{"organizations": {"Org": {"supervisors": {}}}}', '"supervisors" isn\'t a setting'),
+        ('{"organizations": {"Orgs": {"employees": {}}}}', '"Orgs" isn\'t one of the organizations in the shared settings file'),
     ],
 )
 def test_who_pays_mistakes_are_refused(text, message):
+    assert message in mistake_in_accounting(text)
+
+
+@pytest.mark.parametrize(
+    "text, message",
+    [
+        (section(extra=', "employees": {}'), "Org: employees belongs in the accounting settings file"),
+        (section(extra=', "agencies_paid_by": "Org Inc."'), "Org: agencies_paid_by belongs in the accounting settings file"),
+        ('{"organizations": {}, "payrolls": [], "accounting_folder": "C:\\\\x"}', "payrolls, accounting_folder belongs in the accounting"),
+        (section(extra=', "employee": {}'), '"employee" isn\'t a setting'),
+    ],
+)
+def test_pay_details_are_refused_in_the_shared_settings_file(text, message):
+    """Department supervisors' PCs read the shared file, so nothing about pay may be in it."""
     assert message in mistake(text)
+
+
+def test_without_the_accounting_settings_file_the_steps_that_pay_people_say_where_to_find_it():
+    share({"Assembly": "Dana Smith"})
+    assert settings.accounting_file_path() is None
+    with pytest.raises(UnsupportedExport, match="Choose Accounting settings file"):
+        settings.load_full()
+
+
+def test_an_accounting_settings_file_that_cant_be_reached_is_never_replaced_by_a_copy(tmp_path):
+    write_settings(settings.file_path(), employees=PAYROLL_LINKS, payrolls=["Main Payroll"], agencies=["Temp Staffing Inc."])
+    assert settings.load_full().links_pay
+    settings.accounting_file_path().unlink()
+    with pytest.raises(UnsupportedExport, match="accounting settings file can't be reached"):
+        settings.load_full()
+    assert "employees" not in settings.saved_copy_path().read_text(encoding="utf-8")
+
+
+def test_choosing_the_accounting_settings_file_checks_it_first(tmp_path):
+    share({"Assembly": "Dana Smith"})
+    bad = tmp_path / "accounting.json"
+    bad.write_text('{"organizations": {"Nowhere": {"employees": {}}}}', encoding="utf-8")
+    with pytest.raises(UnsupportedExport, match="isn't one of the organizations"):
+        settings.use_accounting_file(bad)
+    assert settings.accounting_file_path() is None
+    good = tmp_path / "good.json"
+    good.write_text('{"payrolls": ["Main Payroll"]}', encoding="utf-8")
+    assert settings.use_accounting_file(good).payrolls == ("Main Payroll",)
+    assert settings.accounting_file_path() == good
+
+
+def test_a_settings_file_from_before_the_split_can_be_split():
+    combined = {
+        "minimum_version": "0.11.0",
+        "organizations": {"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {},
+                                  "employees": {"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": "1"}}}},
+        "payrolls": ["Main Payroll"],
+    }
+    shared, accounting = settings.split_settings(combined)
+    assert shared == {"minimum_version": "0.11.0",
+                      "organizations": {"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {}}}}
+    assert accounting == {"minimum_version": "0.11.0", "payrolls": ["Main Payroll"],
+                          "organizations": {"Org": {"employees": {"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": "1"}}}}}
 
 
 def test_one_employee_number_can_only_belong_to_one_person_in_the_whole_file():
@@ -644,7 +714,9 @@ def test_one_employee_number_can_only_belong_to_one_person_in_the_whole_file():
         payrolls=["Main Payroll"],
         others={"Other Org": organization(employees={"XY-9": {"name": "ZAK, LUCJA", "payroll": "Main Payroll", "number": "0012"}})},
     )
-    message = mistake_in_file()
+    with pytest.raises(UnsupportedExport, match="accounting settings file has a mistake in it") as stopped:
+        settings.load_full()
+    message = str(stopped.value)
     assert (
         f"number 0012 in Main Payroll is given to both {COMPANY}, employees, AL-1 (LEE, AVERY) "
         "and Other Org, employees, XY-9 (ZAK, LUCJA)"
@@ -660,15 +732,10 @@ def test_someone_who_moved_organization_keeps_their_number_under_both_codes():
         payrolls=["Main Payroll"],
         others={"Other Org": organization(employees={"XY-9": {"name": "Lee,  Avery", "payroll": "Main Payroll", "number": "0012"}})},
     )
-    loaded = settings.load()
+    loaded = settings.load_full()
     assert loaded.organization(COMPANY).pay_link("AL-1").number == "12"
     assert loaded.organization("Other Org").pay_link("XY-9").number == "0012"
 
-
-def mistake_in_file():
-    with pytest.raises(UnsupportedExport, match="has a mistake in it") as stopped:
-        settings.load()
-    return str(stopped.value)
 
 
 def test_until_the_file_says_who_pays_anyone_nobody_is_reported_missing(tmp_path):
@@ -715,3 +782,44 @@ def test_an_organization_with_no_links_while_another_has_them_is_reported_in_ful
     )
     result = make_reports(tmp_path)
     assert sorted(result.export.unlinked) == ["AL-1", "LZ-1", "SO-1"]
+
+
+def test_the_command_line_splits_an_old_settings_file_without_overwriting(tmp_path, capsys):
+    from punch_clock import app
+
+    combined = tmp_path / "old.json"
+    combined.write_text(json.dumps({
+        "organizations": {"Org": {"supervisors": {}, "department_schedules": {}, "member_schedules": {},
+                                  "employees": {"A-1": {"name": "Ann", "payroll": "Main Payroll", "number": "1"}}}},
+        "payrolls": ["Main Payroll"],
+    }), encoding="utf-8")
+    assert app.main(["--split-settings", str(combined)]) == 0
+    shared = json.loads((tmp_path / "old shared.json").read_text(encoding="utf-8"))
+    accounting = json.loads((tmp_path / "old accounting.json").read_text(encoding="utf-8"))
+    assert "employees" not in json.dumps(shared) and accounting["payrolls"] == ["Main Payroll"]
+    assert app.main(["--split-settings", str(combined)]) == 1  # never over files already there
+    assert "already exist" in capsys.readouterr().err
+
+
+def test_each_role_sees_only_its_steps_numbered_from_one():
+    from punch_clock import app
+
+    assert app.visible_steps(app.SUPERVISOR) == [("reports", "1. When you have this week's file from Jibble:")]
+    assert [text for _, text in app.visible_steps(app.ACCOUNTING)] == [
+        "1. When a supervisor sends back their Excel file:",
+        "2. When every supervisor has sent back last week's file:",
+        "3. On agency payday, for the last two weeks:",
+    ]
+    assert [name for name, _ in app.visible_steps(app.BOTH)] == ["reports", "receive", "payroll", "agency"]
+
+
+def test_the_role_is_remembered_and_everything_shows_until_one_is_chosen():
+    from punch_clock import app
+
+    assert app.load_role() == app.BOTH
+    app.save_role(app.SUPERVISOR)
+    assert app.load_role() == app.SUPERVISOR
+    assert "Accounting settings file" not in app.location_text(app.SUPERVISOR)
+    assert "Accounting settings file: not chosen yet" in app.location_text(app.ACCOUNTING)
+    settings.role_path().write_text("manager", encoding="utf-8")
+    assert app.load_role() == app.BOTH

@@ -20,6 +20,16 @@ from punch_clock.jibble_export import UnsupportedExport, WeeklyExport
 from punch_clock.reports import ProcessResult, process_export
 
 APP_NAME = "Punch Clock"
+# Who uses this PC, and so which steps its window shows, by the name saved in settings.role_path().
+SUPERVISOR, ACCOUNTING, BOTH = "supervisor", "accounting", "both"
+ROLES = {SUPERVISOR: "Department supervisor", ACCOUNTING: "Accounting", BOTH: "Both"}
+# Each step's name, the roles that see it, and its heading without its number.
+STEPS = (
+    ("reports", (SUPERVISOR, BOTH), "When you have this week's file from Jibble:"),
+    ("receive", (ACCOUNTING, BOTH), "When a supervisor sends back their Excel file:"),
+    ("payroll", (ACCOUNTING, BOTH), "When every supervisor has sent back last week's file:"),
+    ("agency", (ACCOUNTING, BOTH), "On agency payday, for the last two weeks:"),
+)
 POLL_MS = 100  # how often the window looks for background work to have finished
 FONT_SIZE = 10  # points; Windows' usual 9 is hard to read for many of the people using the app
 
@@ -235,6 +245,54 @@ def choose_returned_folder(parent, weeks: str) -> Optional[Path]:
     return Path(chosen) if chosen else None
 
 
+def load_role() -> str:
+    """Everything is shown until someone chooses, so nothing is hidden from a PC set up before roles."""
+    try:
+        role = settings.role_path().read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        role = ""
+    return role if role in ROLES else BOTH
+
+
+def save_role(role: str) -> None:
+    try:
+        settings.role_path().parent.mkdir(parents=True, exist_ok=True)
+        settings.role_path().write_text(role, encoding="utf-8")
+    except OSError:
+        pass  # the window still shows the steps chosen; it just won't remember them
+
+
+def visible_steps(role: str) -> list[tuple[str, str]]:
+    """The steps this role sees, with their numbered headings."""
+    shown = [(name, text) for name, roles, text in STEPS if role in roles]
+    return [(name, f"{number}. {text}") for number, (name, text) in enumerate(shown, start=1)]
+
+
+def location_text(role: str) -> str:
+    lines = [f"Settings file: {settings.file_path()}"]
+    if role != SUPERVISOR:
+        chosen = settings.accounting_file_path()
+        lines.append(f"Accounting settings file: {chosen or 'not chosen yet. Choose Accounting settings file... to show where it is.'}")
+    return "\n".join(lines)
+
+
+def choose_accounting_settings_file(parent) -> Optional[Path]:
+    """Ask where the accounting settings file is. Returns it if it's good, and otherwise nothing changes."""
+    from tkinter import filedialog
+
+    current = settings.accounting_file_path()
+    chosen = filedialog.askopenfilename(
+        parent=parent,
+        title="Choose the Punch Clock accounting settings file",
+        initialdir=str(current.parent) if current else None,
+        filetypes=[("Settings file", "*.json")],
+    )
+    if not chosen:
+        return None
+    path = Path(chosen)
+    return path if _show_errors(parent, lambda: settings.use_accounting_file(path)) else None
+
+
 def choose_settings_file(parent) -> Optional[Path]:
     """Ask where this PC's settings file is. Returns it if it's good, and otherwise nothing changes."""
     from tkinter import filedialog
@@ -353,7 +411,8 @@ def run_window() -> int:
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(9, weight=1)
     status = tk.StringVar(value="The reports are saved in a new folder next to that file.")
-    settings_location = tk.StringVar(value=f"Settings file: {settings.file_path()}")
+    role = {"now": load_role()}
+    settings_location = tk.StringVar(value=location_text(role["now"]))
     last_folder: dict[str, Path] = {}
     # Whether the settings file names an accounting folder, so payroll and agency files read from it, with no folder
     # to choose. Known once the settings file has been read when the window opens.
@@ -479,9 +538,38 @@ def run_window() -> int:
             root.destroy()
 
     def on_settings_file() -> None:
-        chosen = choose_settings_file(root)
-        if chosen:
-            settings_location.set(f"Settings file: {chosen}")
+        if choose_settings_file(root):
+            settings_location.set(location_text(role["now"]))
+            read_payroll_runs()
+
+    def on_accounting_settings_file() -> None:
+        if choose_accounting_settings_file(root):
+            settings_location.set(location_text(role["now"]))
+            read_payroll_runs()
+
+    def show_role(chosen: str) -> None:
+        """Only the steps this PC's user needs, numbered from 1."""
+        role["now"] = chosen
+        headings = dict(visible_steps(chosen))
+        for name, (heading, widget) in steps.items():
+            if name in headings:
+                heading.configure(text=headings[name])
+                heading.grid()
+                widget.grid()
+            else:
+                heading.grid_remove()
+                widget.grid_remove()
+        if chosen == SUPERVISOR:
+            accounting_settings_button.pack_forget()
+        else:
+            accounting_settings_button.pack(side="left", padx=(8, 0), after=settings_button)
+        settings_location.set(location_text(chosen))
+
+    def on_role(_event=None) -> None:
+        chosen = next(key for key, label in ROLES.items() if label == role_choice.get())
+        save_role(chosen)
+        show_role(chosen)
+        if chosen != SUPERVISOR:
             read_payroll_runs()
 
     def show_payroll_buttons(runs: Sequence[str]) -> None:
@@ -500,7 +588,8 @@ def run_window() -> int:
             if making_reports:
                 button.state(["disabled"])
             buttons.append(button)
-        controls[:] = [process_button, receive_button, *buttons, agency_button, settings_button]
+        controls[:] = [process_button, receive_button, *buttons, agency_button, settings_button, accounting_settings_button,
+                       role_menu]
 
     def read_payroll_runs() -> None:
         """Once when the window opens, and when the settings file changes. If it can't be read, the one button
@@ -511,28 +600,26 @@ def run_window() -> int:
                 accounting["folder"] = current.accounting_folder
                 show_payroll_buttons(list(current.payroll_runs))
 
-        _in_background(root, settings.load, loaded)
+        if role["now"] == SUPERVISOR:
+            return  # a department supervisor's PC has no payroll buttons, and never reads the accounting settings
+        _in_background(root, settings.load_full if settings.accounting_file_path() else settings.load, loaded)
 
-    ttk.Label(frame, text="1. When you have this week's file from Jibble:", style="Heading.TLabel").grid(
-        row=0, column=0, sticky="w")
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
-    process_button.grid(row=1, column=0, sticky="ew", pady=(6, 18))
-    ttk.Label(frame, text="2. When a supervisor sends back their Excel file:", style="Heading.TLabel").grid(
-        row=2, column=0, sticky="w")
     receive_button = ttk.Button(frame, text="Receive returned files...", command=on_receive)
-    receive_button.grid(row=3, column=0, sticky="ew", pady=(6, 18))
-    ttk.Label(frame, text="3. When every supervisor has sent back last week's file:", style="Heading.TLabel").grid(
-        row=4, column=0, sticky="w")
     payroll_frame = ttk.Frame(frame)
-    payroll_frame.grid(row=5, column=0, sticky="ew", pady=(6, 18))
-    ttk.Label(frame, text="4. On agency payday, for the last two weeks:", style="Heading.TLabel").grid(
-        row=6, column=0, sticky="w")
     agency_button = ttk.Button(
         frame,
         text="Make the agency hours...",
         command=from_returned_files("the last two weeks", "agency hours", make_agency_hours, agency_summary),
     )
-    agency_button.grid(row=7, column=0, sticky="ew", pady=(6, 18))
+    steps = {}  # each step's heading and button, by name, shown or hidden by show_role
+    for row, (name, widget) in enumerate(
+        (("reports", process_button), ("receive", receive_button), ("payroll", payroll_frame), ("agency", agency_button))
+    ):
+        heading = ttk.Label(frame, style="Heading.TLabel")
+        heading.grid(row=2 * row, column=0, sticky="w")
+        widget.grid(row=2 * row + 1, column=0, sticky="ew", pady=(6, 18))
+        steps[name] = (heading, widget)
     progress = ttk.Progressbar(frame, mode="indeterminate")  # moves while the reports are being made
     progress.grid(row=8, column=0, sticky="ew", pady=(0, 12), ipady=4)
     progress.grid_remove()
@@ -552,13 +639,24 @@ def run_window() -> int:
     bottom.grid(row=12, column=0, sticky="ew", pady=(10, 0))
     settings_button = ttk.Button(bottom, text="Settings file...", command=while_busy(on_settings_file))
     settings_button.pack(side="left")
+    accounting_settings_button = ttk.Button(
+        bottom, text="Accounting settings file...", command=while_busy(on_accounting_settings_file)
+    )
     open_button = ttk.Button(bottom, text="Open folder", command=lambda: os.startfile(last_folder["path"]))
     open_button.state(["disabled"])
     open_button.pack(side="right")
+    role_row = ttk.Frame(frame)
+    role_row.grid(row=13, column=0, sticky="w", pady=(10, 0))
+    ttk.Label(role_row, text="Show the steps for:", style="Note.TLabel").pack(side="left", padx=(0, 6))
+    role_choice = tk.StringVar(value=ROLES[role["now"]])
+    role_menu = ttk.Combobox(role_row, textvariable=role_choice, values=list(ROLES.values()), state="readonly", width=22)
+    role_menu.bind("<<ComboboxSelected>>", on_role)
+    role_menu.pack(side="left")
     controls: list = []  # every button that's disabled while something is being made, kept up to date
     show_payroll_buttons([])
+    show_role(role["now"])
     read_payroll_runs()
-    process_button.focus_set()
+    (process_button if role["now"] != ACCOUNTING else receive_button).focus_set()
     if updater.is_packaged():
         _offer_update(root, status, controls, lambda: busy)
     root.protocol("WM_DELETE_WINDOW", on_close)
@@ -589,6 +687,25 @@ def run_command_line(source: Path, output_dir: Optional[Path]) -> int:
     return 0
 
 
+def run_split_settings(path: Path) -> int:
+    """Write "<name> shared.json" and "<name> accounting.json" beside the file, never over an existing one."""
+    try:
+        combined = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as error:
+        _emit(sys.stderr, f"Error: {path} couldn't be read as a settings file: {error}")
+        return 1
+    shared, accounting = settings.split_settings(combined)
+    targets = [(path.with_name(f"{path.stem} shared.json"), shared), (path.with_name(f"{path.stem} accounting.json"), accounting)]
+    existing = [str(target) for target, _ in targets if target.exists()]
+    if existing:
+        _emit(sys.stderr, f"Error: these already exist, so nothing was written: {', '.join(existing)}")
+        return 1
+    for target, content in targets:
+        target.write_text(json.dumps(content, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _emit(sys.stdout, str(target))
+    return 0
+
+
 def run_update() -> int:
     """Update without asking, for running from a command prompt or a scheduled task."""
     if not updater.is_packaged():
@@ -612,10 +729,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("source", nargs="?", type=Path, help="weekly Jibble export (.xlsx) to process")
     parser.add_argument("--output-dir", type=Path, help="where to create the week's folder (default: beside the export)")
     parser.add_argument("--update", action="store_true", help="install the latest release, if there's a newer one")
+    parser.add_argument(
+        "--split-settings", type=Path, metavar="SETTINGS_FILE",
+        help="split a settings file from before 0.11.0's split into a shared file and an accounting file beside it",
+    )
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     args = parser.parse_args(argv)
     if args.update:
         return run_update()
+    if args.split_settings:
+        return run_split_settings(args.split_settings)
     if args.source:
         return run_command_line(args.source, args.output_dir)
     return run_window()

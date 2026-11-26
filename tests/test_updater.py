@@ -1,3 +1,4 @@
+import gc
 import hashlib
 import json
 import subprocess
@@ -159,9 +160,13 @@ class Window:
 
 @pytest.fixture
 def window(tk_root, monkeypatch):
+    # Tk objects left over from earlier tests must be collected here, on the main thread. Collected later, inside a
+    # background thread, Tk raises "main thread is not in main loop" and the window stops responding.
+    gc.collect()
     shown = Window(tk_root, monkeypatch)
     yield shown
     shown.cleanup()
+    gc.collect()
 
 
 def test_nothing_is_shown_when_up_to_date_or_offline(window, monkeypatch):

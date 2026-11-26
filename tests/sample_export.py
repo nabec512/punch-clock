@@ -10,9 +10,11 @@ Add a second path to also write matching fictional settings.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import openpyxl
 
@@ -79,8 +81,55 @@ def write_settings(
             agencies = {name: agency_details(name) for name in agencies}
         settings["agencies"] = agencies
         settings["agency_pay"] = agency_pay or AGENCY_PAY
+    write_split(path, settings)
+
+
+ACCOUNTING_FILE = "punch-clock-accounting.json"
+ACCOUNTING_KEYS = ("payrolls", "agencies", "agency_pay", "payroll_runs", "accounting_folder")
+ACCOUNTING_ORGANIZATION_KEYS = ("employees", "agencies_paid_by")
+
+
+def accounting_file(path) -> Path:
+    """Where write_settings puts the accounting settings that go with the shared settings at ``path``."""
+    return Path(path).with_name(ACCOUNTING_FILE)
+
+
+def write_split(path, settings: dict) -> None:
+    """Write settings as the real ones are kept: the shared file at ``path``, and anything to do with pay in an
+    accounting file beside it, which this PC is then shown, as Accounting settings file... would. With nothing to
+    do with pay, there's no accounting file, as on a department supervisor's PC."""
+    shared = {key: value for key, value in settings.items() if key not in ACCOUNTING_KEYS}
+    accounting = {key: value for key, value in settings.items() if key in ACCOUNTING_KEYS}
+    shared["organizations"], pay = {}, {}
+    for name, section in settings["organizations"].items():
+        shared["organizations"][name] = {k: v for k, v in section.items() if k not in ACCOUNTING_ORGANIZATION_KEYS}
+        moved = {k: v for k, v in section.items() if k in ACCOUNTING_ORGANIZATION_KEYS}
+        if moved:
+            pay[name] = moved
+    if pay:
+        accounting["organizations"] = pay
     with open(path, "w", encoding="utf-8") as file:
-        json.dump(settings, file, ensure_ascii=False)
+        json.dump(shared, file, ensure_ascii=False)
+    location = Path(os.environ.get("APPDATA") or Path.home()) / "Punch Clock" / "accounting-settings-location.txt"
+    if accounting:
+        with open(accounting_file(path), "w", encoding="utf-8") as file:
+            json.dump(accounting, file, ensure_ascii=False)
+        location.parent.mkdir(parents=True, exist_ok=True)
+        location.write_text(str(accounting_file(path)), encoding="utf-8")
+    else:
+        location.unlink(missing_ok=True)
+        accounting_file(path).unlink(missing_ok=True)
+
+
+def update_accounting(path, **changes) -> None:
+    """Change settings in the accounting file that goes with the shared settings at ``path``, starting one if needed."""
+    file = accounting_file(path)
+    settings = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {}
+    settings.update(changes)
+    file.write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
+    location = Path(os.environ.get("APPDATA") or Path.home()) / "Punch Clock" / "accounting-settings-location.txt"
+    location.parent.mkdir(parents=True, exist_ok=True)
+    location.write_text(str(file), encoding="utf-8")
 
 
 def default_people() -> list[Person]:

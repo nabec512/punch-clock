@@ -167,7 +167,7 @@ def make_agency_hours(folder: Optional[str | Path] = None, today: Optional[date]
     With the settings file's accounting folder, the files received there are read and the agency files are made
     there. Otherwise every review file in ``folder`` and below it is read, and they're made in ``folder``.
     """
-    current = settings.load()
+    current = settings.load_full()
     if not current.agencies or current.agency_pay is None:
         raise UnsupportedExport(
             f"The settings file doesn't list any agencies yet, so there's no one to send hours to:\n\n{current.path}"

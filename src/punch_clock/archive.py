@@ -122,7 +122,7 @@ def _who() -> str:
 
 def receive_files(paths: Iterable[str | Path], now: Optional[datetime] = None) -> ReceiveResult:
     """Check each returned file and keep it in the accounting folder. Nothing is kept unless every file can be read."""
-    current = settings.load()
+    current = settings.load_full()
     root = accounting_folder(current)
     now = now or datetime.now()
     paths = [Path(path) for path in paths]

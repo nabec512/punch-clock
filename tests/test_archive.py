@@ -1,12 +1,11 @@
 """Receiving returned files into the accounting folder, and making payroll and agency files from it. All fictional."""
 import csv
-import json
 import shutil
 from datetime import datetime, timedelta
 
 import openpyxl
 import pytest
-from sample_export import COMPANY, WEEK_START, build_workbook
+from sample_export import COMPANY, WEEK_START, build_workbook, update_accounting
 from test_payroll_files import EMPLOYEES, NEXT_WEDNESDAY, crew, read, setup_settings
 from test_review_flow import Sheet
 
@@ -25,10 +24,7 @@ NOON = datetime(2026, 3, 9, 12, 0, 0)
 
 
 def use_accounting_folder(folder):
-    path = settings.file_path()
-    written = json.loads(path.read_text(encoding="utf-8"))
-    written["accounting_folder"] = str(folder)
-    path.write_text(json.dumps(written), encoding="utf-8")
+    update_accounting(settings.file_path(), accounting_folder=str(folder))
 
 
 @pytest.fixture
@@ -177,6 +173,7 @@ def test_an_accounting_folder_that_cant_be_reached_stops_everything(setup, tmp_p
 
 
 def test_receiving_needs_the_accounting_folder_in_the_settings(tmp_path):
+    setup_settings()
     with pytest.raises(UnsupportedExport, match='Add "accounting_folder"'):
         receive_files([], now=NOON)
 
@@ -185,7 +182,7 @@ def test_the_accounting_folder_must_be_a_full_location(tmp_path):
     setup_settings()
     use_accounting_folder("Accounting")
     with pytest.raises(UnsupportedExport, match="accounting_folder must be the full location of a folder"):
-        settings.load()
+        settings.load_full()
 
 
 def test_agency_hours_are_read_from_and_made_in_the_accounting_folder(setup, tmp_path):

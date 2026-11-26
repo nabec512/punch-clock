@@ -1,11 +1,10 @@
 """Each payroll's PowerPay import file for one week, from the returned review files. All values are fictional."""
-import json
 import shutil
 from datetime import date, timedelta
 
 import openpyxl
 import pytest
-from sample_export import COMPANY, WEEK_START, Person, build_workbook, organization, write_settings
+from sample_export import COMPANY, WEEK_START, Person, build_workbook, organization, update_accounting, write_settings
 from test_review_flow import Sheet
 
 from punch_clock import reports, settings
@@ -173,6 +172,7 @@ def test_making_them_again_makes_a_new_folder(returned):
 def test_settings_without_payrolls_are_refused(returned):
     folder, _ = returned
     write_settings(settings.file_path(), {"Paint": "Bea Boss"})
+    update_accounting(settings.file_path())  # an accounting settings file with nothing in it yet
     with pytest.raises(UnsupportedExport, match="doesn't list any payrolls yet"):
         make_payroll_files(folder, today=NEXT_WEDNESDAY)
 
@@ -321,10 +321,8 @@ def two_companies(tmp_path, runs=None, other_employees=None):
         employees=other_employees or {"OB-1": {"name": "OTHER, BEA", "payroll": "Third Payroll", "number": "5"}},
     )
     setup_settings(others={"Other Org": other})
-    path = settings.file_path()
-    written = json.loads(path.read_text(encoding="utf-8"))
-    written["payroll_runs"] = runs if runs is not None else {"EXAMPLE": [COMPANY], "OTHER": ["Other Org"]}
-    path.write_text(json.dumps(written), encoding="utf-8")
+    runs = runs if runs is not None else {"EXAMPLE": [COMPANY], "OTHER": ["Other Org"]}
+    update_accounting(settings.file_path(), payroll_runs=runs)
     for company, people in ((COMPANY, crew()), ("Other Org", [Person("Bea Other", "OB-1", "Office", weekdays())])):
         source = tmp_path / f"export {company}.xlsx"
         build_workbook(people, company=company).save(source)
@@ -372,7 +370,7 @@ def test_another_runs_unreadable_file_doesnt_stop_this_one(tmp_path):
 def test_payroll_run_mistakes_are_refused(tmp_path, runs, message):
     with pytest.raises(UnsupportedExport, match="has a mistake in it") as stopped:
         two_companies(tmp_path, runs)
-        settings.load()
+        settings.load_full()
     assert message in str(stopped.value)
 
 

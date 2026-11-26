@@ -209,7 +209,7 @@ def make_payroll_files(
     ``run`` is one of the settings file's payroll_runs: only its organizations' files are read. Without one, every
     organization's are.
     """
-    current = settings.load()
+    current = settings.load_full()
     if not current.payrolls:
         raise UnsupportedExport(f"The settings file doesn't list any payrolls yet, so there's no one to pay:\n\n{current.path}")
     if run is not None and run not in current.payroll_runs:

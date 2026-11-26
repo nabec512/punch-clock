@@ -78,6 +78,21 @@ def _write_pdf(export: WeeklyExport, path: Path, group: Optional[ReviewGroup] = 
         pending.unlink(missing_ok=True)
 
 
+def _unlinked(current: settings.Settings, export: WeeklyExport) -> Optional[tuple[str, ...]]:
+    """Who in the reports the accounting settings don't say pays, so they can be added before payday. Only on a PC
+    shown the accounting settings file, and only once it links anyone. A department supervisor's PC never reads it."""
+    if settings.accounting_file_path() is None:
+        return None
+    try:
+        full = settings.load_accounting(current)
+    except UnsupportedExport:
+        return None  # the weekly reports don't depend on it; the steps that pay people will say what's wrong
+    if not full.links_pay:
+        return None
+    organization = full.organization(export.company)
+    return tuple(e.code for e in export.included if organization.pay_link(e.code) is None)
+
+
 def process_export(
     source: str | Path, parent: str | Path | None = None, supervisors: Optional[Mapping[str, str]] = None
 ) -> ProcessResult:
@@ -92,7 +107,7 @@ def process_export(
     organization = current.organization(export.company)
     assign_schedules(export, organization.schedule_for)
     export = with_supervisors(export, organization.supervisors if supervisors is None else supervisors)
-    unlinked = tuple(e.code for e in export.included if organization.pay_link(e.code) is None) if current.links_pay else None
+    unlinked = _unlinked(current, export)
     export = replace(export, settings_note=current.note, unlinked=unlinked)
     groups = tuple(review_groups(export))
     folder = _new_folder(Path(parent) if parent else source.parent, output_folder_name(export))

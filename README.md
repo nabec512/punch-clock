@@ -69,6 +69,18 @@ Choosing a different position and then the right one again doesn't fix it. Jibbl
 
 If that doesn't work, contact Jibble support. Until it's fixed, add their member code to `member_departments` in the settings file, as described in [The settings file](#the-settings-file). They then get that department's supervisor and schedule, and the PDF shows that department. The validation file lists them with the position Jibble shows. Remove them once Jibble's export is right.
 
+## Who sees what
+
+Each PC's window shows only the steps its user needs, chosen under **Show the steps for** at the bottom and remembered on that PC:
+
+| Choice | Shows |
+|---|---|
+| Department supervisor | Making the weekly reports from the Jibble file |
+| Accounting | Receiving returned files, the payroll files and the agency hours |
+| Both | Everything, such as for someone in accounting who also makes the weekly reports. This is what shows until a choice is made |
+
+This only tidies the window. What keeps pay private is where the files are: the accounting settings file and the accounting folder are on a share only accounting can open, so on anyone else's PC those steps can't read them, whatever is chosen.
+
 ## Weekly use
 
 **Step 1: process the export.** Open Punch Clock, choose **Make this week's reports**, and select the file. A moving bar shows while the reports are being made, and the week's folder opens when it's ready. In `Supervisor files`, send each supervisor their PDF to print and their Excel file to fill in. Accounting keeps the two `Missing supervisor` files and reviews them.
@@ -87,7 +99,7 @@ To correct a punch or a position, fix it in Jibble, export again, and start from
 
 ## The accounting folder
 
-The returned spreadsheets hold everyone's hours, and the payroll and agency files hold who is paid what. So they're kept in one folder that Punch Clock looks after, on a share **only accounting staff can open**, such as the accounting server. The settings file says where it is, with `accounting_folder`. Nobody chooses where a file goes, so files can't be misplaced or kept twice.
+The returned spreadsheets hold everyone's hours, and the payroll and agency files hold who is paid what. So they're kept in one folder that Punch Clock looks after, on a share **only accounting staff can open**, such as the accounting server. The accounting settings file says where it is, with `accounting_folder`. Nobody chooses where a file goes, so files can't be misplaced or kept twice.
 
 ```text
 <accounting folder>\
@@ -116,25 +128,25 @@ Punch Clock creates the organization and week folders itself. Only the top folde
 2. Files it under its organization and week, named from what's inside it, so a renamed attachment still lands in the right place.
 3. If a file for that supervisor and week was received before, moves the earlier one to `history` and keeps the new one. Receiving the same file twice changes nothing.
 4. Writes a line in `receipts.csv`: when, which Windows user, the organization, supervisor and week, and the file's fingerprint (a SHA-256 checksum).
-5. Lists anything to fix before payday, such as incomplete punches with no hours typed, or someone the settings file doesn't link to a payroll or an agency. Fix it in the spreadsheet, or ask the supervisor to, and receive it again.
+5. Lists anything to fix before payday, such as incomplete punches with no hours typed, or someone the accounting settings file doesn't link to a payroll or an agency. Fix it in the spreadsheet, or ask the supervisor to, and receive it again.
 
 **Making payroll and agency files.** With an accounting folder, the payroll and agency buttons don't ask for a folder. They read the files received for the week or pay period, and make their files under `Payroll files` or `Agency hours`. Before using a file, they check its fingerprint against its receipt. A file that was changed in the accounting folder, or put there by hand, stops the run until it's received again through the app, so what's paid is always what was received.
 
 If the accounting folder can't be reached, Punch Clock says so, and receives and makes nothing. It never keeps a copy on the PC instead, which the other PCs couldn't see.
 
-**Setting it up.** Ask IT for a folder on the accounting server that only accounting staff can open, with read and write access for them and nobody else, and covered by the server's backups. Put the settings file there too, as it holds everyone's payroll and employee numbers, and if possible let only the person who maintains it change it. Then add the folder to the settings file, with each `\` written twice:
+**Setting it up.** Ask IT for a folder on the accounting server that only accounting staff can open, with read and write access for them and nobody else, and covered by the server's backups. Put the accounting settings file there too, as it holds everyone's payroll and employee numbers, and if possible let only the person who maintains it change it. Then add the folder to the accounting settings file, with each `\` written twice:
 
 ```json
 "accounting_folder": "\\\\accounting-server\\Punch Clock"
 ```
 
-Without `accounting_folder`, **Receive returned files...** explains what to add, and the payroll and agency buttons ask for a folder instead, and read every returned spreadsheet in it, as below.
+Without `accounting_folder` in the accounting settings file, **Receive returned files...** explains what to add, and the payroll and agency buttons ask for a folder instead, and read every returned spreadsheet in it, as below.
 
 ## Payroll files
 
 Once every supervisor has sent back last week's Excel file, accounting makes one PowerPay import file per payroll.
 
-Where each company's accounting makes its own payroll files, `payroll_runs` in the settings file gives each one a button, such as **EXAMPLE Payroll Files...**, that reads only its own organizations' files. Without it there's one **Make the payroll files...** button for every organization.
+Where each company's accounting makes its own payroll files, `payroll_runs` in the accounting settings file gives each one a button, such as **EXAMPLE Payroll Files...**, that reads only its own organizations' files. Without it there's one **Make the payroll files...** button for every organization.
 
 1. Receive every returned Excel file for the week, as above. Corrections made on paper are typed into the Excel file first, and the file is received again.
 2. Choose the payroll button.
@@ -148,7 +160,7 @@ Each line starts with the person's name, so accounting can tell who it is. Power
 
 It stops, and makes nothing, if:
 
-- Anyone in the files isn't linked to a payroll or an agency in the settings file. See [Who pays each employee](#who-pays-each-employee).
+- Anyone in the files isn't linked to a payroll or an agency in the accounting settings file. See [Who pays each employee](#who-pays-each-employee).
 - A file in the accounting folder doesn't match its receipt. Receive it again.
 - Without an accounting folder: a supervisor's file for the week, or one employee, is in the folder twice. Keep only the returned one.
 - Someone paid through a payroll has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on an agency person's row doesn't hold up payroll.
@@ -179,7 +191,7 @@ The hours are worked out again from each file, as for payroll, so a correction s
 - Someone with an agency has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on a payroll person's row doesn't hold up the agency files.
 - Without an accounting folder: a spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
-When it's done, the window lists any supervisor in the settings file with no file for a week, anyone the settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
+When it's done, the window lists any supervisor in the settings file with no file for a week, anyone the accounting settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
 
 ## Who reviews whom
 
@@ -237,15 +249,24 @@ A day off with no hours set works as before: lunch is deducted, hours are paid a
 
 To change the lunch length, grace period, overtime rule, block length or 40-hour week, edit the numbers at the top of [`hours.py`](src/punch_clock/hours.py) and the wording in [`pdf_report.py`](src/punch_clock/pdf_report.py), [`review_workbook.py`](src/punch_clock/review_workbook.py) and [`validation_report.py`](src/punch_clock/validation_report.py).
 
-## The settings file
+## The settings files
 
-Supervisors and work schedules aren't in the app or this repository, because both are public. They're in one file that you keep somewhere every PC can reach, such as a shared drive.
+Nothing about the company's people is in the app or this repository, because both are public. It's in two files, kept apart because different people need them:
 
-The app looks for `punch-clock-settings.json` in the user's home folder. To use a file somewhere else, choose **Settings file...** in the app once on each PC, and pick the file. The app checks it, then remembers it on that PC, including through updates. The window shows which file it's using.
+| File | Holds | Kept where |
+|---|---|---|
+| The **settings file** | Each organization's supervisors and work schedules | A shared drive every PC that makes the weekly reports can reach |
+| The **accounting settings file** | Who pays each employee, the payrolls and agencies, the payroll buttons and the accounting folder | Somewhere only accounting can open, such as the accounting server |
 
-To change a supervisor or a schedule, edit that file. There's no new version to release, and each PC uses the change the next time it makes reports. Files already sent out don't change.
+A department supervisor's PC only ever reads the settings file. Nothing about pay is on it, or copied to it.
 
-The file has a section for each organization, because organizations can have departments with the same name:
+**Where each PC finds them.** The app looks for `punch-clock-settings.json` in the user's home folder. To use a file somewhere else, such as on a shared drive, choose **Settings file...** once on each PC, and pick it. A shared drive can have a different letter on each PC, so this is chosen on each one. On accounting PCs, also choose **Accounting settings file...** and pick that file. The app checks each file, then remembers it on that PC, including through updates. The window shows which files it's using.
+
+To change a supervisor, a schedule or who pays someone, edit the file. There's no new version to release, and each PC uses the change the next time it reads the file. Files already sent out don't change.
+
+### The settings file
+
+It has a section for each organization, because organizations can have departments with the same name:
 
 ```json
 {
@@ -262,24 +283,14 @@ The file has a section for each organization, because organizations can have dep
         "Shipping": { "start": "08:00", "end": "16:30", "weekend": { "Sat": { "start": "04:30", "end": "09:30" } } }
       },
       "member_schedules": { "AB-1": { "start": "09:30", "end": "18:00" } },
-      "member_departments": { "CD-1": "Receiving" },
-      "employees": {
-        "AB-1": { "name": "BROWN, ALEX", "payroll": "Example Payroll", "number": "1042" },
-        "CD-1": { "name": "Casey Diaz", "agency": "Example Staffing" }
-      },
-      "agencies_paid_by": "Example Co. Inc."
+      "member_departments": { "CD-1": "Receiving" }
     },
     "Second Example Ltd.": {
       "supervisors": { "Assembly": "Morgan Blake" },
       "department_schedules": { "Assembly": { "start": "07:00", "end": "15:30" } },
       "member_schedules": {}
     }
-  },
-  "payrolls": ["Example Payroll", "Second Payroll"],
-  "agencies": {
-    "Example Staffing": { "legal_name": "1234-5678 Example Inc.", "contact": "hours@example.com" }
-  },
-  "agency_pay": { "lunch_per_day": 3.00, "period_starts": "2026-03-02" }
+  }
 }
 ```
 
@@ -295,19 +306,55 @@ The file has a section for each organization, because organizations can have dep
 | `days` | Days worked. Leave it out for Monday to Friday |
 | `weekend_schedule` | Optional. Hours for days off, by day name (`Mon` to `Sun`), with a `start` and `end` each. They're used only on a day the person's schedule has off, so `Fri` hours only affect a crew that works Monday to Thursday. See [Weekend hours](#weekend-hours) |
 | `weekend` | Optional, on a department or member schedule. Changes the organization's weekend hours one day at a time. Above, Shipping starts at 4:30 AM on Saturday and keeps the organization's Sunday hours. A member schedule replaces the department's, so it starts again from the organization's weekend hours |
-| `employees` | Optional. Who pays each employee, by Jibble member code. See [Who pays each employee](#who-pays-each-employee). Needs version 0.11.0 |
-| `agencies_paid_by` | The company that sends this organization's agency staff hours to their agency, as it should appear after FROM. Needed once the organization has anyone with an agency under `employees` |
-| `payrolls` | Optional, beside `organizations` at the top. Every payroll named under `employees`, each written once |
-| `agencies` | Optional, beside `organizations` at the top. Every staffing agency named under `employees`, each written once, with the `legal_name` and the `contact` email its hours are sent to |
-| `accounting_folder` | Optional, beside `organizations` at the top. Where returned files are kept and payroll and agency files are made, on a share only accounting can open, with each `\` written twice. See [The accounting folder](#the-accounting-folder) |
-| `payroll_runs` | Optional, beside `organizations` at the top. A payroll button for each name, reading only the organizations listed under it, like `"payroll_runs": { "EXAMPLE": ["Example Co."], "SECOND": ["Second Example Ltd."] }`. Every organization must be in exactly one. A payroll that pays people in two of them gets a file from each, and both are imported. See [Payroll files](#payroll-files) |
+
+Anything to do with pay in this file is refused, with a message saying to move it to the accounting settings file.
+
+### The accounting settings file
+
+It names organizations exactly as the settings file does, but only to say who pays their people:
+
+```json
+{
+  "organizations": {
+    "Example Co.": {
+      "employees": {
+        "AB-1": { "name": "BROWN, ALEX", "payroll": "Example Payroll", "number": "1042" },
+        "CD-1": { "name": "Casey Diaz", "agency": "Example Staffing" }
+      },
+      "agencies_paid_by": "Example Co. Inc."
+    }
+  },
+  "payrolls": ["Example Payroll", "Second Payroll"],
+  "agencies": {
+    "Example Staffing": { "legal_name": "1234-5678 Example Inc.", "contact": "hours@example.com" }
+  },
+  "agency_pay": { "lunch_per_day": 3.00, "period_starts": "2026-03-02" },
+  "payroll_runs": { "EXAMPLE": ["Example Co."], "SECOND": ["Second Example Ltd."] },
+  "accounting_folder": "\\\\accounting-server\\Punch Clock"
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `organizations` | Optional. A section for any organization whose people are listed, spelled as in the settings file |
+| `employees` | In an organization's section. Who pays each employee, by Jibble member code. See [Who pays each employee](#who-pays-each-employee) |
+| `agencies_paid_by` | In an organization's section. The company that sends its agency staff hours to their agency, as it should appear after FROM. Needed once the organization has anyone with an agency under `employees` |
+| `payrolls` | Every payroll named under `employees`, each written once |
+| `agencies` | Every staffing agency named under `employees`, each written once, with the `legal_name` and the `contact` email its hours are sent to |
 | `agency_pay` | Needed beside `agencies`. `lunch_per_day` is the dollars charged for each scheduled day an agency employee works, as a number. `period_starts` is the Monday any agency pay period started, as `"year-month-day"`. Every period is two weeks from there, so it only changes if the cycle does. See [Agency payday](#agency-payday) |
+| `payroll_runs` | Optional. A payroll button for each name, reading only the organizations listed under it. Every organization in the settings file must be in exactly one. A payroll that pays people in two of them gets a file from each, and both are imported. See [Payroll files](#payroll-files) |
+| `accounting_folder` | Optional. Where returned files are kept and payroll and agency files are made, with each `\` written twice. See [The accounting folder](#the-accounting-folder) |
+| `minimum_version` | Optional, as in the settings file |
+
+Unlike the settings file, it's never copied to the PC: if it can't be reached, receiving files and making payroll and agency files stop, and say so. The weekly reports don't need it.
+
+**Settings files from before the split.** A file that holds both is refused, saying what to move. To split one, run `punch-clock --split-settings <file>`. It writes `<name> shared.json` and `<name> accounting.json` beside it, and never writes over a file that's already there. Check both, put each where it belongs, and choose them in the app.
 
 Someone with no schedule is paid as worked, with overtime starting at 8:15.
 
 ### Who pays each employee
 
-Some employees are on a different company's books from the organization they punch in, and some are employed through a staffing agency. So the file says who pays each person, one by one, under `employees` in the section for the organization they punch in:
+Some employees are on a different company's books from the organization they punch in, and some are employed through a staffing agency. So the accounting settings file says who pays each person, one by one, under `employees` in the section for the organization they punch in:
 
 - **Through a payroll:** `name`, `payroll` and `number`. The number is their employee number in that payroll, in quotes. Numbers only need to be unique within a payroll, but one number can't be given to two people in the same payroll anywhere in the file.
 
@@ -322,7 +369,7 @@ Set `minimum_version` to `"0.11.0"` when adding them, as older versions refuse a
 
 An export from an organization with no section of its own is refused, with a message giving its name exactly as the export spells it, so it never gets another organization's supervisors or hours. To process it, add a section with that name. Settings files from before version 0.6.0 have no sections. The app refuses them and says how to fix them: put the existing `supervisors`, `department_schedules` and `member_schedules` inside a section named for their organization.
 
-The app reads the file once each time someone makes reports, and doesn't touch the drive at any other time. It copies each good read to `%APPDATA%\Punch Clock\saved-settings.json`, and remembers the file's location beside it.
+The app reads the settings file each time someone makes reports or payroll or agency files, and when the window opens, to show the right buttons. It doesn't touch the drive at any other time. It copies each good read of the settings file, never the accounting one, to `%APPDATA%\Punch Clock\saved-settings.json`, and remembers both files' locations beside it.
 
 | What happens | What the app does |
 |---|---|
@@ -340,7 +387,7 @@ The window only makes files for the last full week, Monday to Sunday. Earlier we
 **Same organization, new payroll.** Say LEE, AVERY moves from Main Payroll to Second Payroll and keeps the same Jibble code, `AL-1`.
 
 1. Make the files for the last week paid through the old payroll, and import them into that payroll in PowerPay.
-2. Before the first week in the new payroll, change the link in the settings file. Both payrolls must be listed under `payrolls`:
+2. Before the first week in the new payroll, change the link in the accounting settings file. Both payrolls must be listed under `payrolls`:
 
    ```json
    "employees": {
