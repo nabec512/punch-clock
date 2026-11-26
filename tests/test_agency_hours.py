@@ -14,7 +14,7 @@ from punch_clock.agency_workbook import TOTAL as TOTAL_ROW
 from punch_clock.app import agency_summary
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.reports import REVIEW_FOLDER, process_export
-from punch_clock.review_workbook import REVIEWED, TOTAL, WEEK_TOTAL
+from punch_clock.review_workbook import TOTAL
 
 FIRST, SECOND = WEEK_START, WEEK_START + timedelta(days=7)
 PAYDAY = WEEK_START + timedelta(days=16)  # the Wednesday after the period
@@ -88,12 +88,6 @@ def returned(tmp_path):
 
 def review_files(result, part):
     return [p for p in (result.folder / REVIEW_FOLDER).glob("*.xlsx") if part in p.name]
-
-
-def mark_reviewed(results, name, part):
-    for result in results:
-        for path in review_files(result, part):
-            Sheet(path).set(name, WEEK_TOTAL, REVIEWED, "Yes").save()
 
 
 def _table(sheet, first_row):
@@ -172,12 +166,8 @@ def test_hours_come_from_what_the_supervisor_approved(returned):
     assert rows(result.reports[1][1]) == [("TEMP, ANN", 40, 0, 38, 0, 78, 0, 9, -27)]
 
 
-def test_who_wasnt_marked_reviewed_is_listed(returned):
-    folder, weeks = returned
-    result = make_agency_hours(folder, today=PAYDAY)
-    assert "Not marked Reviewed by their supervisor: TEMP, ANN, TEMP, BO." in result.warnings
-    mark_reviewed(weeks, "Ann Temp", "Bea Boss")
-    mark_reviewed(weeks, "Bo Temp", "Missing supervisor")
+def test_nothing_is_listed_when_every_file_is_there(returned):
+    folder, _ = returned
     assert not make_agency_hours(folder, today=PAYDAY).warnings
 
 

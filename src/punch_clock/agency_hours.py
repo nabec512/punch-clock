@@ -44,7 +44,6 @@ class AgencyEmployee:
     code: str  # Jibble member code
     organization: str
     weeks: tuple[AgencyWeek, ...]  # one per week of the pay period, in order
-    reviewed: bool  # marked Reviewed by the supervisor in every week they're in
 
 
 @dataclass(frozen=True)
@@ -112,10 +111,9 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
         for employee, link in agency_staff:
             person = people.setdefault(
                 (organization_key(file.company), employee.code.casefold()),
-                {"link": link, "employee": employee, "organization": organization, "weeks": {}, "reviewed": True},
+                {"link": link, "employee": employee, "organization": organization, "weeks": {}},
             )
             person["weeks"][file.start] = AgencyWeek(employee.regular or 0, employee.overtime or 0, _lunch_days(employee))
-            person["reviewed"] = person["reviewed"] and employee.reviewed
     if problems:
         raise UnsupportedExport(
             "These supervisor files have agency staff whose hours can't be used yet. "
@@ -127,7 +125,6 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
         )
 
     grouped: dict[tuple[str, str], list[AgencyEmployee]] = {}
-    not_reviewed = []
     for person in people.values():
         link, employee, organization = person["link"], person["employee"], person["organization"]
         grouped.setdefault((link.agency, organization.agencies_paid_by), []).append(
@@ -136,11 +133,8 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
                 employee.code,
                 organization.name,
                 tuple(person["weeks"].get(week, AgencyWeek()) for week in weeks),
-                person["reviewed"],
             )
         )
-        if not person["reviewed"]:
-            not_reviewed.append(link.name)
     reports = [
         AgencyReport(
             current.agencies[agency],
@@ -152,8 +146,6 @@ def collect(files: list[ApprovedFile], current: settings.Settings, start: date, 
         for (agency, paid_by), employees in sorted(grouped.items())
     ]
     warnings = missing_files(files, current, weeks)
-    if not_reviewed:
-        warnings.append(f"Not marked Reviewed by their supervisor: {', '.join(sorted(not_reviewed, key=str.casefold))}.")
     if unlinked:
         warnings.append(
             "The settings file doesn't say who pays these people, so they're left out. If any of them are with an agency, "

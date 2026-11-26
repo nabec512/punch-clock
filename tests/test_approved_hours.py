@@ -11,7 +11,7 @@ from punch_clock.approved_hours import read_approved_hours
 from punch_clock.hours import week_hours
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.reports import SOURCE_PREFIX, process_export
-from punch_clock.review_workbook import ADJUSTMENT, COMMENT, DATA_SHEET, EMPLOYEE, REVIEWED, TOTAL, WEEK_TOTAL
+from punch_clock.review_workbook import ADJUSTMENT, COMMENT, DATA_SHEET, EMPLOYEE, NOTES, REVIEWED, TOTAL, WEEK_TOTAL
 
 MONDAY = date(2026, 3, 2)
 TUESDAY, SATURDAY = MONDAY + timedelta(days=1), MONDAY + timedelta(days=5)
@@ -60,7 +60,6 @@ def test_an_untouched_file_gives_the_hours_worked_out_from_the_punches(result):
             assert (read.total, read.regular, read.overtime) == (made.paid, made.regular, made.overtime)
         week = week_hours(days)
         assert (employee.regular, employee.overtime, employee.total) == (week.regular, week.overtime, week.paid)
-        assert not employee.reviewed
     ann = approved.employees[0]
     assert ann.total == 480 + 540 + 300 - 30 * 0  # paid by the schedule: 9:00 Monday, 8:00 Tuesday, 5:00 Saturday
     assert ann.days[5].overtime == 300 and ann.days[5].regular == 0
@@ -70,13 +69,13 @@ def test_an_untouched_file_gives_the_hours_worked_out_from_the_punches(result):
     assert approved.problems == ("Cal Painter, Tue Mar 3: the punches are incomplete and no hours were typed in Total approved hours.",)
 
 
-def test_adjustments_typed_hours_comments_and_reviewed_count(result):
+def test_adjustments_typed_hours_and_comments_count(result):
     path = review_file(result, "Bea Boss")
     sheet = Sheet(path)
     sheet.set("Ann Painter", MONDAY, ADJUSTMENT, -60).set("Ann Painter", MONDAY, COMMENT, "Left early, not on Jibble")
     sheet.set("Ann Painter", MONDAY + timedelta(days=3), ADJUSTMENT, 300)  # forgot to punch on Thursday
     sheet.set("Cal Painter", TUESDAY, TOTAL, 7.5 / 24)  # typed as 7:30
-    sheet.set("Ann Painter", WEEK_TOTAL, REVIEWED, "Yes").set("Ann Painter", WEEK_TOTAL, COMMENT, "OK")
+    sheet.set("Ann Painter", WEEK_TOTAL, COMMENT, "OK")
     sheet.save()  # openpyxl keeps no formula results, like a program that doesn't recalculate
 
     approved = read_approved_hours(path)
@@ -85,12 +84,27 @@ def test_adjustments_typed_hours_comments_and_reviewed_count(result):
     monday, thursday = ann.days[0], ann.days[3]
     assert (monday.total, monday.adjustment, monday.overtime, monday.comment) == (480, -60, 0, "Left early, not on Jibble")
     assert (thursday.total, thursday.regular, thursday.overtime) == (300, 300, 0)
-    assert (ann.reviewed, ann.comment) == (True, "OK")
+    assert ann.comment == "OK"
     assert ann.total == 480 + 480 + 300 + 300
     # Saturday's overtime first makes up the 2:30 the week is short of its scheduled 40:00, as in the file.
     assert (ann.regular, ann.overtime) == (1560, 0)
     tuesday = cal.days[1]
-    assert (tuesday.total, tuesday.typed, cal.total, cal.reviewed) == (450, True, 480 + 450, False)
+    assert (tuesday.total, tuesday.typed, cal.total) == (450, True, 480 + 450)
+
+
+def test_a_file_made_with_the_reviewed_column_can_still_be_read(result):
+    """Review files made before Reviewed was dropped have it before Notes. Whatever it says is ignored."""
+    path = review_file(result, "Bea Boss")
+    workbook = openpyxl.load_workbook(path)
+    sheet = workbook["Review"]
+    header = next(row[0].row for row in sheet.iter_rows() if row[0].value == EMPLOYEE)
+    notes = next(cell.column for cell in sheet[header] if cell.value == NOTES)
+    sheet.insert_cols(notes)
+    sheet.cell(header, notes, REVIEWED)
+    workbook.save(path)
+    Sheet(path).set("Ann Painter", WEEK_TOTAL, REVIEWED, "Yes").set("Ann Painter", MONDAY, ADJUSTMENT, -60).save()
+    approved = read_approved_hours(path)
+    assert approved.employees[0].total == 480 + 540 + 300 - 60
 
 
 def test_every_problem_in_the_file_is_listed_at_once(result):

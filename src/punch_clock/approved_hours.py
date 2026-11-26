@@ -26,7 +26,7 @@ from punch_clock.hours import BLOCK_MINUTES, DayHours, format_minutes, overtime_
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.review_workbook import (
     ADJUSTMENT, COLUMNS, COMMENT, COMPANY, DATA_COLUMNS, DATA_FORMAT, DATA_SHEET, DATE, EMPLOYEE, FORMAT,
-    HEADER_ROW, MADE_WITH, OVERTIME, REGULAR, REVIEW_GROUP, REVIEW_SHEET, REVIEWED, TOTAL, WEEK_START, WEEK_TOTAL,
+    MADE_WITH, NOTES, OVERTIME, REGULAR, REVIEW_GROUP, REVIEW_SHEET, REVIEWED, TOTAL, WEEK_START, WEEK_TOTAL,
 )
 
 FIRST_READABLE_VERSION = "0.11.0"  # review files from older versions have no data sheet
@@ -55,7 +55,6 @@ class ApprovedEmployee:
     regular: Optional[int]  # the week's, after overtime makes up a short week; None while any day needs hours
     overtime: Optional[int]
     total: Optional[int]
-    reviewed: bool
     comment: str
     problems: tuple[str, ...] = ()  # this employee's share of the file's problems
 
@@ -182,14 +181,26 @@ def _data_row(row: tuple) -> _Day:
     )
 
 
+HEADER_SEARCH_ROWS = 30  # the column headings are below the title and instructions
+_LABELS = tuple(label for label, _ in COLUMNS)
+# Files made before Reviewed was dropped have it before Notes, and one more line of instructions above the headings.
+_LAYOUTS = (_LABELS, (*_LABELS[: _LABELS.index(NOTES)], REVIEWED, NOTES))
+
+
 def _check_header(sheet, path: Path) -> None:
-    found = tuple(sheet.cell(HEADER_ROW + 1, column + 1).value for column in range(len(COLUMNS)))
-    if found != tuple(label for label, _ in COLUMNS):
-        raise _refuse_changed(path, "its column headings are different")
+    """Finds the column headings, and remembers on the sheet which column each one is in."""
+    for row in sheet.iter_rows(max_row=HEADER_SEARCH_ROWS, max_col=len(_LAYOUTS[-1]), values_only=True):
+        if row and row[0] == EMPLOYEE:
+            found = tuple(value for value in row if value is not None)
+            if found in _LAYOUTS:
+                sheet.punch_clock_columns = {label: index + 1 for index, label in enumerate(found)}
+                return
+            break
+    raise _refuse_changed(path, "its column headings are different")
 
 
 def _cell(sheet, row: int, label: str):
-    return sheet.cell(row, [name for name, _ in COLUMNS].index(label) + 1).value
+    return sheet.cell(row, sheet.punch_clock_columns[label]).value
 
 
 def _label(day: _Day) -> str:
@@ -222,7 +233,6 @@ def _read_employee(sheet, path: Path, days: list[_Day], problems: list[str]) -> 
         for label, minutes in ((REGULAR, week.regular), (OVERTIME, week.overtime), (TOTAL, week.paid)):
             expected = NEEDS_HOURS if minutes is None else minutes
             _compare(sheet, week_row, label, expected, f"{first.name}, Week total", problems)
-    reviewed = str(_cell(sheet, week_row, REVIEWED) or "").strip().casefold() == "yes"
     return ApprovedEmployee(
         first.code,
         first.name,
@@ -231,7 +241,6 @@ def _read_employee(sheet, path: Path, days: list[_Day], problems: list[str]) -> 
         week.regular,
         week.overtime,
         week.paid,
-        reviewed,
         _text(_cell(sheet, week_row, COMMENT)),
         tuple(problems[before:]),
     )

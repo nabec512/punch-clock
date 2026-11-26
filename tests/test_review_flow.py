@@ -24,7 +24,6 @@ from punch_clock.review_workbook import (
     INCOMPLETE,
     OVERTIME,
     REGULAR,
-    REVIEWED,
     TOTAL,
     WEEK_TOTAL,
 )
@@ -293,8 +292,8 @@ def test_only_input_cells_are_unlocked(processed):
     total = sheet.row_for("Ann Painter", WEEK_TOTAL)
     unlocked = lambda row, label: not sheet.sheet.cell(row, sheet.columns[label]).protection.locked
     assert unlocked(day, ADJUSTMENT) and unlocked(day, COMMENT)
-    assert not unlocked(day, TOTAL) and not unlocked(day, "Net") and not unlocked(day, REVIEWED)
-    assert unlocked(total, REVIEWED) and not unlocked(total, TOTAL)
+    assert not unlocked(day, TOTAL) and not unlocked(day, "Net")
+    assert unlocked(total, COMMENT) and not unlocked(total, TOTAL)
 
 
 def test_incomplete_day_unlocks_approved_instead_of_adjustment(tmp_path):
@@ -361,15 +360,10 @@ def test_columns_are_the_ones_supervisors_need(processed):
     assert "Member code" not in [cell.value for cell in workbook["Punches"][1]]
 
 
-def test_reviewed_starts_at_no_with_a_yes_no_list_on_the_week_total_only(processed):
+def test_there_is_no_reviewed_column_to_fill_in(processed):
     sheet = Sheet(review_file(processed, "Bea Boss"))
-    total = sheet.sheet.cell(sheet.row_for("Ann Painter", WEEK_TOTAL), sheet.columns[REVIEWED])
-    assert total.value == "No"
-    lists = [v for v in sheet.sheet.data_validations.dataValidation if v.type == "list"]
-    assert any(total.coordinate in v.sqref for v in lists)
-    assert all(v.formula1 == '"Yes,No"' for v in lists)
-    assert len(lists) == 3  # one per employee
-    assert sheet.sheet.cell(sheet.row_for("Ann Painter", MONDAY), sheet.columns[REVIEWED]).value is None
+    assert "Reviewed" not in sheet.columns
+    assert not [v for v in sheet.sheet.data_validations.dataValidation if v.type == "list"]
 
 
 # --- Forgotten punches ---------------------------------------------------------

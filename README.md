@@ -80,7 +80,6 @@ If that doesn't work, contact Jibble support. Until it's fixed, add their member
 - Adds the time for anyone who forgot to punch as an adjustment, for example `300` for 5 hours. Every day of the week has a row, including Saturday and Sunday, so a forgotten weekend shift can be entered too.
 - Types the total approved hours as `h:mm` in 15-minute steps on any orange row, where the punches are incomplete.
 - Adds comments if needed.
-- Chooses **Yes** under **Reviewed** in each employee's **Week total** row.
 
 **Step 3: accounting takes over.** Supervisors send their Excel files back to accounting, who make the payroll files from them. Agency staff are paid every two weeks instead: see [Agency payday](#agency-payday).
 
@@ -107,7 +106,7 @@ It stops, and makes nothing, if:
 - Someone paid through a payroll has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on an agency person's row doesn't hold up payroll.
 - A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
-When it's done, the window and the summary list anyone not marked Reviewed, any supervisor in the settings file with no file for the week, any organization with no files at all, any payroll with no one's hours that week, and any other spreadsheet in the folder that couldn't be opened.
+When it's done, the window and the summary list any supervisor in the settings file with no file for the week, any organization with no files at all, any payroll with no one's hours that week, and any other spreadsheet in the folder that couldn't be opened.
 
 ### Setting up the import in PowerPay
 
@@ -130,7 +129,7 @@ The hours are worked out again from each file, as for payroll, so a correction s
 - Someone with an agency has hours that can't be used yet, such as incomplete punches with no hours typed. The message lists them all. A mistake on a payroll person's row doesn't hold up the agency files.
 - A spreadsheet in the folder with one of the weeks' dates in its name can't be read: it's open in Excel, has a password, was saved as another type such as `.xls`, or is a review file made before 0.11.0. The message says how to fix each.
 
-When it's done, the window lists anyone not marked Reviewed, any supervisor in the settings file with no file for a week, anyone the settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
+When it's done, the window lists any supervisor in the settings file with no file for a week, anyone the settings file doesn't link to a payroll or an agency, and any other spreadsheet in the folder that couldn't be opened, so they can be checked before the files are sent.
 
 ## Who reviews whom
 

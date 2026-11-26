@@ -50,7 +50,6 @@ class PayrollLine:
     regular: int  # minutes
     overtime: int
     organization: str  # the Jibble organization they punch in, for the summary
-    reviewed: bool
 
 
 @dataclass(frozen=True)
@@ -105,7 +104,6 @@ def collect(
     unlinked: list[str] = []
     problems: list[str] = []
     by_payroll: dict[str, list[PayrollLine]] = {payroll: [] for payroll in payrolls}
-    not_reviewed: list[str] = []
     for file in files:
         organization = current.organization(file.company)
         paid_here = []
@@ -122,10 +120,8 @@ def collect(
             continue
         for employee, link in paid_here:
             by_payroll[link.payroll].append(
-                PayrollLine(link.name, link.number, employee.regular or 0, employee.overtime or 0, file.company, employee.reviewed)
+                PayrollLine(link.name, link.number, employee.regular or 0, employee.overtime or 0, file.company)
             )
-            if not employee.reviewed:
-                not_reviewed.append(link.name)
     if unlinked:
         raise UnsupportedExport(
             "The settings file doesn't say who pays these people, so the payroll files can't be complete. Add them under "
@@ -138,8 +134,6 @@ def collect(
             "\n\n" + "\n".join(problems)
         )
     warnings = _numbers_in_two_places(by_payroll)
-    if not_reviewed:
-        warnings.append(f"Not marked Reviewed by their supervisor: {', '.join(sorted(not_reviewed, key=str.casefold))}.")
     return by_payroll, warnings
 
 
@@ -192,7 +186,7 @@ def summary_text(
         for line in payroll.lines:
             lines.append(
                 f"  {line.number:>6}  {line.name:<30} {hours_text(line.regular):>7} RT {hours_text(line.overtime):>7} OT"
-                f"   {line.organization}{'' if line.reviewed else '   (not marked Reviewed)'}"
+                f"   {line.organization}"
             )
         lines.append("")
     lines += ["Supervisor files read:", *(f"  {shown_path(file.path, folder)}" for file in files)]

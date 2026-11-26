@@ -32,15 +32,16 @@ DATA_FORMAT = 1  # raise when the data sheet changes in a way an older reader wo
 EMPLOYEE, DATE, CLOCK_IN, CLOCK_OUT, GROSS, LUNCH, NET = (
     "Employee", "Date", "Clock in", "Clock out", "Gross", "Lunch deduction", "Net",
 )
-ADJUSTMENT, REGULAR, OVERTIME, TOTAL, COMMENT, REVIEWED, NOTES = (
-    "Adjustment (minutes)", "Regular hours", "Overtime hours", "Total approved hours", "Comment", "Reviewed", "Notes",
+ADJUSTMENT, REGULAR, OVERTIME, TOTAL, COMMENT, NOTES = (
+    "Adjustment (minutes)", "Regular hours", "Overtime hours", "Total approved hours", "Comment", "Notes",
 )
+REVIEWED = "Reviewed"  # a column before Notes in files made before it was dropped, which can still be read back
 WEEK_TOTAL = "Week total"
 INCOMPLETE = "Incomplete"
 
 COLUMNS = [
     (EMPLOYEE, 34), (DATE, 12), (CLOCK_IN, 10), (CLOCK_OUT, 10), (GROSS, 11), (LUNCH, 11), (NET, 11),
-    (ADJUSTMENT, 12), (REGULAR, 11), (OVERTIME, 11), (TOTAL, 14), (COMMENT, 30), (REVIEWED, 10), (NOTES, 44),
+    (ADJUSTMENT, 12), (REGULAR, 11), (OVERTIME, 11), (TOTAL, 14), (COMMENT, 30), (NOTES, 44),
 ]
 COLUMN = {label: index for index, (label, _) in enumerate(COLUMNS)}
 
@@ -59,8 +60,6 @@ INSTRUCTIONS = [
     "All hours on a day off, such as the weekend, are overtime. An adjustment or typed hours change it too.",
     "If the week's regular hours come to less than the employee's scheduled week (at most 40:00), overtime makes up "
     "the difference first, so the Week total row can show more regular and less overtime than the days added up.",
-    "When you've finished an employee, go to Reviewed in their Week total row, click the cell that says No, "
-    "and choose Yes from the arrow.",
     "When everyone is done, save this file and return it to accounting.",
 ]
 HEADER_ROW = len(INSTRUCTIONS) + 2  # zero-based, below the title, week and instructions
@@ -115,7 +114,6 @@ def _formats(workbook) -> dict:
         "muted": make({"valign": "top", "bg_color": "#F4F4F4"}),
         "edit_text": make({**edit, "text_wrap": True}),
         "edit_number": make({**edit, "num_format": "+0;-0;0", "align": "right"}),
-        "edit_choice": make({**edit, "align": "center"}),
         "edit_hours": make({**edit, "num_format": "[h]:mm", "align": "right", "bg_color": "#F8C98B"}),
         "total": make(total),
         "total_wrap": make({**total, "text_wrap": True, "indent": 1}),
@@ -250,7 +248,6 @@ def _write_day(sheet, formats, employee: Employee, record: DayRecord, row: int) 
             sheet.write_blank(row, COLUMN[label], None, formats["duration"])
 
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
-    sheet.write_blank(row, COLUMN[REVIEWED], None, formats["muted"])
     # From the total, so a supervisor's adjustment or typed hours count. In whole minutes, as times are fractions of a day.
     sheet.write_formula(
         row,
@@ -350,18 +347,6 @@ def _write_week_total(sheet, formats, export, employee: Employee, first: int, ro
             formula, cached = f"={expression}", minutes / 1440
         sheet.write_formula(row, COLUMN[label], formula, formats["week_hours"], cached)
     sheet.write_blank(row, COLUMN[COMMENT], None, formats["edit_text"])
-    sheet.write(row, COLUMN[REVIEWED], "No", formats["edit_choice"])
-    sheet.data_validation(
-        row, COLUMN[REVIEWED], row, COLUMN[REVIEWED],
-        {
-            "validate": "list",
-            "source": ["Yes", "No"],
-            "input_title": "Reviewed",
-            "input_message": "Click the arrow and choose Yes when you've finished this employee.",
-            "error_title": "Reviewed",
-            "error_message": "Choose Yes or No.",
-        },
-    )
     # h:mm built by hand, as TEXT's duration codes differ between languages of Excel.
     shown = f'INT({made_up}/60)&":"&TEXT(MOD({made_up},60),"00")'
     note = f'IF({made_up}>0,{shown}&"{MADE_UP_NOTE.format(made_up="", full=format_minutes(week.full_minutes))}","")'

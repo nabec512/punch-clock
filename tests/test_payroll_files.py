@@ -13,7 +13,7 @@ from punch_clock.app import payroll_button_names, payroll_summary
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.payroll_files import last_full_week, make_payroll_files, plain_name
 from punch_clock.reports import REVIEW_FOLDER, process_export
-from punch_clock.review_workbook import ADJUSTMENT, REVIEWED, WEEK_TOTAL
+from punch_clock.review_workbook import ADJUSTMENT
 
 NEXT_WEDNESDAY = WEEK_START + timedelta(days=9)
 EIGHT_TO_FOUR_THIRTY = {"start": "08:00", "end": "16:30"}
@@ -91,7 +91,6 @@ def test_each_payroll_gets_its_peoples_regular_and_overtime_hours(returned):
     ]
     assert [(p.payroll, p.regular, p.overtime) for p in result.payrolls] == [("Main Payroll", 2400, 0), ("Second Payroll", 2400, 360)]
     assert "No one has hours this week in: Third Payroll, so there's no file for it." in result.warnings
-    assert "Not marked Reviewed by their supervisor: STAFF, CY, STAFF, EVE, STAFF, FAY." in result.warnings
 
 
 def test_the_summary_lists_everyone_to_check_against_powerpay(returned):
@@ -100,7 +99,7 @@ def test_the_summary_lists_everyone_to_check_against_powerpay(returned):
     text = result.summary.read_text(encoding="utf-8")
     assert "Payroll hours for Mon Mar 2 to Sun Mar 8, 2026" in text
     assert "Second Payroll: 1 person, 40.00 RT, 6.00 OT. File: Second Payroll 2026-03-02.csv" in text
-    assert "12  STAFF, EVE" in text and "6.00 OT   Example Co.   (not marked Reviewed)" in text
+    assert "12  STAFF, EVE" in text and "6.00 OT   Example Co." in text and "Reviewed" not in text
     assert "Third Payroll" in text  # under To check
     window = payroll_summary(result)
     assert "Main Payroll 2026-03-02.csv: 1 employee, 40.00 regular hours, 0.00 overtime" in window
@@ -110,10 +109,9 @@ def test_the_summary_lists_everyone_to_check_against_powerpay(returned):
 def test_hours_come_from_what_the_supervisor_approved(returned):
     folder, week = returned
     sheet = Sheet(review_file(week, "Bea Boss"))
-    sheet.set("Eve Staff", WEEK_START, ADJUSTMENT, -60).set("Eve Staff", WEEK_TOTAL, REVIEWED, "Yes").save()
+    sheet.set("Eve Staff", WEEK_START, ADJUSTMENT, -60).save()
     result = make_payroll_files(folder, today=NEXT_WEDNESDAY)
     assert read(result.folder / "Second Payroll 2026-03-02.csv")[1:] == ["STAFF EVE,12,RT,40.00,1", "STAFF EVE,12,OT,5.00,1"]
-    assert "STAFF, EVE" not in next(w for w in result.warnings if w.startswith("Not marked Reviewed"))
 
 
 def test_someone_not_linked_stops_it(returned):
