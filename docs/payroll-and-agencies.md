@@ -30,6 +30,8 @@ Punch Clock makes each week's supervisor reports. The next step takes the hours 
 
 **0.11.0: weekly payroll files** (`payroll_files.py`, the **Make the payroll files...** button). One PowerPay import CSV per payroll for the last full week, in the layout below, with RT and OT on every payroll for now. A summary beside the files lists everyone's hours to check against PowerPay. Anyone not linked stops it, agency staff are left out, and an organization in the settings file with no file for the week is listed. Returned files are found the same way as for the agencies: anywhere in one chosen folder.
 
+**Documented: changing payroll or organization** in the README, under [When someone changes payroll or organization](../README.md#when-someone-changes-payroll-or-organization). Open gap: two payroll buttons can't see each other's files, so someone with hours under both codes in one week isn't caught.
+
 ## Waiting on
 
 - **Whether every payroll uses the same earning codes.** One payroll's codes are known: RT (Regular Hours) and OT (Overtime Hours, 1.5x), both paid in hours. They're assumed for every payroll for now and built into `payroll_files.py`. If a payroll turns out to differ, its codes go in the settings file.

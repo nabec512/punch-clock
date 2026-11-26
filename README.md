@@ -261,7 +261,7 @@ Some employees are on a different company's books from the organization they pun
 
 - **Through a payroll:** `name`, `payroll` and `number`. The number is their employee number in that payroll, in quotes. Numbers only need to be unique within a payroll, but one number can't be given to two people in the same payroll anywhere in the file.
 
-  **Someone who moves organization** gets a new member code in Jibble. Add the new code under the new organization, with the same payroll, number and name, and keep the old one until no week you might rerun has hours under it. The same number is allowed twice as long as the name is the same. If both codes have hours in the same week, the payroll file leaves that person out and says so, to be entered by hand: each organization's file worked out overtime on its own part of the week.
+  **Someone who moves organization or payroll** needs their links changed in a set order, so that older weeks still go where they were paid. See [When someone changes payroll or organization](#when-someone-changes-payroll-or-organization).
 - **Through an agency:** `name` and `agency`. The agency is sent their hours and bills for them.
 
 `name` is the person's name as the payroll or agency knows them, which can differ from Jibble's. Each payroll and agency must also be listed in `payrolls` or `agencies` at the top of the file, so a misspelled one is refused instead of being treated as a new one. Each agency is listed with where its hours go, and an organization with anyone from an agency says, in `agencies_paid_by`, which company sends them. That doesn't depend on where people punch: two organizations can name the same company.
@@ -280,6 +280,60 @@ The app reads the file once each time someone makes reports, and doesn't touch t
 | It can't be reached, and this PC has no saved copy | Stops with a plain message |
 | The file has a mistake in it | Stops with a plain message, and keeps the saved copy as it was |
 | The file needs a newer version of the app | Stops, and says to update |
+
+### When someone changes payroll or organization
+
+Each Jibble member code has one link, and the app reads the links each time it makes files. So a change applies the next time files are made. Files already made or imported don't change.
+
+The window only makes files for the last full week, Monday to Sunday. Earlier weeks can't be picked. Making the same week again, before the next Monday, creates a new folder ending in `(2)`, and it uses the links as they are at that point.
+
+**Same organization, new payroll.** Say LEE, AVERY moves from Main Payroll to Second Payroll and keeps the same Jibble code, `AL-1`.
+
+1. Make the files for the last week paid through the old payroll, and import them into that payroll in PowerPay.
+2. Before the first week in the new payroll, change the link in the settings file. Both payrolls must be listed under `payrolls`:
+
+   ```json
+   "employees": {
+     "AL-1": { "name": "LEE, AVERY", "payroll": "Second Payroll", "number": "2210" }
+   }
+   ```
+
+3. Choose **Settings file...** and pick the file, to check it.
+4. Don't make files again for a week paid through the old payroll. If one is made again, its hours go to the new payroll. Enter that week's hours in the old payroll in PowerPay by hand.
+
+**Different organization and different payroll.** Say LEE moves to Second Example Ltd. and gets a new code, `BX-7`, paid through Second Payroll as number `2210`.
+
+1. Add the new code under the new organization, with its payroll and number.
+2. Keep the old code under the old organization, still paid through Main Payroll as `1042`. Older weeks still go there. Only remove it once no week you might make again has hours under it.
+
+   ```json
+   "Example Co.": {
+     "employees": {
+       "AL-1": { "name": "LEE, AVERY", "payroll": "Main Payroll", "number": "1042" }
+     }
+   },
+   "Second Example Ltd.": {
+     "employees": {
+       "BX-7": { "name": "LEE, AVERY", "payroll": "Second Payroll", "number": "2210" }
+     }
+   }
+   ```
+
+The two numbers are in different payrolls, so there's no clash.
+
+**Different organization, same payroll.** Say LEE moves to Second Example Ltd. but stays in Main Payroll as `1042`. Add the new code under the new organization, with the same payroll, number and name, and keep the old code too. The same number is allowed under two codes only when the name is the same.
+
+- If LEE has hours under both codes in the same week, the payroll file leaves LEE out, and the window and the summary say so. Enter that week's hours in PowerPay by hand, after the import.
+- This check only sees the files of one payroll button. If the two organizations have different payroll buttons, it can't see the other one's files, so it doesn't warn. In that case, check both summaries for the same week before importing. If LEE is in both, stop and ask before importing, as the second import would replace the first.
+
+**Agency and payroll.** Agency staff are paid every two weeks by the agency, and they're left out of the payroll files. To move someone from an agency to a payroll, replace their `agency` with `payroll` and `number`. The file refuses a person with both. Moving back works the same way in reverse.
+
+- Make the change between pay periods: after an agency period's hours have been sent, and before the first payroll week. Each agency period is two weeks, starting on the Monday in `agency_pay`.
+- Agency hours for a period are read with the links as they are when the agency files are made. So if the change happens in the middle of a period:
+  - Agency to payroll: the person drops out of that period's agency file, for both weeks and with no warning. The first week's hours then aren't sent to the agency, so enter them by hand.
+  - Payroll to agency: the agency file includes both weeks, including any already paid through payroll. Take those weeks out of the agency file by hand, to avoid paying them twice.
+
+**Payroll buttons.** Each payroll button reads the files of its own organizations. So a file is made by the button of the organization the person punches in, under the new code, even if the payroll belongs to another company. If that payroll is also paid by another button, the summary says to import that file too. Check with the other company before importing it.
 
 ### Mistakes in the file
 
