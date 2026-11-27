@@ -8,7 +8,7 @@ from sample_export import COMPANY, WEEK_START, Person, agency_details, build_wor
 from test_review_flow import Sheet
 
 from punch_clock import settings
-from punch_clock.agency_hours import make_agency_hours
+from punch_clock.agency_hours import make_agency_hours, period_choices
 from punch_clock.agency_workbook import DETAIL_TITLE, HEADER_ROW, SHEET
 from punch_clock.agency_workbook import TOTAL as TOTAL_ROW
 from punch_clock.app import agency_summary
@@ -232,6 +232,33 @@ def test_the_period_is_counted_in_two_weeks_from_the_settings():
     assert pay.period_before(date(2026, 3, 15)) == date(2026, 2, 16)  # the period's last Sunday, so it hasn't ended
     assert pay.period_before(date(2026, 4, 1)) == date(2026, 3, 16)
     assert pay.period_before(date(2026, 1, 7)) == date(2025, 12, 22)  # before the date in the settings too
+    assert pay.is_period_start(date(2026, 3, 16)) and pay.is_period_start(date(2025, 12, 22))
+    assert not pay.is_period_start(date(2026, 3, 9))
+
+
+def test_a_period_not_over_yet_can_be_made_with_a_warning(returned):
+    folder, _ = returned
+    result = make_agency_hours(folder, today=SECOND + timedelta(days=2), start=FIRST)
+    assert result.start == FIRST
+    assert result.warnings[0].startswith("Mon Mar 2 to Sun Mar 15, 2026 isn't over yet")
+    assert "isn't over yet" in agency_summary(result)
+
+
+def test_a_chosen_period_must_be_a_pay_period_that_has_started(returned):
+    folder, _ = returned
+    with pytest.raises(UnsupportedExport, match="No agency pay period starts on Monday Mar 9"):
+        make_agency_hours(folder, today=PAYDAY, start=SECOND)
+    with pytest.raises(UnsupportedExport, match="hasn't started yet"):
+        make_agency_hours(folder, today=PAYDAY, start=FIRST + timedelta(days=28))
+
+
+def test_the_periods_to_choose_are_those_received_and_the_latest_ended():
+    pay = settings.AgencyPay(3.0, date(2026, 3, 2))
+    today = date(2026, 3, 25)  # in the period from Mar 16
+    received = {date(2026, 3, 23), date(2026, 2, 9), date(2026, 3, 30)}
+    assert period_choices(pay, today, received) == [date(2026, 3, 16), date(2026, 3, 2), date(2026, 2, 2)]
+    assert period_choices(pay, today, set()) == [date(2026, 3, 2)]
+    assert period_choices(pay, today, None) == [date(2026, 3, 16), date(2026, 3, 2), date(2026, 2, 16), date(2026, 2, 2)]
 
 
 def test_an_agency_with_people_sent_from_two_companies_gets_a_file_from_each(tmp_path):

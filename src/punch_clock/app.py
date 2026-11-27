@@ -6,13 +6,15 @@ import json
 import os
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from punch_clock import __version__, settings, updater
-from punch_clock.agency_hours import AgencyResult, make_agency_hours, period_label
-from punch_clock.archive import ReceiveResult, receive_files
-from punch_clock.payroll_files import PayrollResult, hours_text, make_payroll_files
+from punch_clock.agency_hours import AgencyResult, make_agency_hours, period_choices, period_label
+from punch_clock.archive import ReceiveResult, receive_files, received_weeks
+from punch_clock.payroll_files import PayrollResult, hours_text, is_over, make_payroll_files, week_choices
+from punch_clock.settings import PERIOD_DAYS
 from punch_clock.returned_files import week_label
 from punch_clock.assignments import departments_without_supervisor
 from punch_clock.hours import DOUBLE_PUNCH_NOTE
@@ -27,8 +29,8 @@ ROLES = {SUPERVISOR: "Department supervisor", ACCOUNTING: "Accounting", BOTH: "B
 STEPS = (
     ("reports", (SUPERVISOR, BOTH), "When you have this week's file from Jibble:"),
     ("receive", (ACCOUNTING, BOTH), "When a supervisor sends back their Excel file:"),
-    ("payroll", (ACCOUNTING, BOTH), "When every supervisor has sent back last week's file:"),
-    ("agency", (ACCOUNTING, BOTH), "On agency payday, for the last two weeks:"),
+    ("payroll", (ACCOUNTING, BOTH), "When every supervisor has sent back the week's file:"),
+    ("agency", (ACCOUNTING, BOTH), "On agency payday, for the two-week pay period:"),
 )
 POLL_MS = 100  # how often the window looks for background work to have finished
 FONT_SIZE = 10  # points; Windows' usual 9 is hard to read for many of the people using the app
@@ -216,6 +218,11 @@ def process_in_window(root, source: Path, working: Callable[[bool], None], finis
 
     working(True)
     _in_background(root, lambda: process_export(source), done)
+
+
+def dated_choices(starts: Sequence[date], label: Callable[[date], str], days: int, today: date) -> list[tuple[str, date]]:
+    """Each week or pay period's text in a list to choose from, saying which aren't over yet."""
+    return [(label(start) + ("" if is_over(start, days, today) else " (not over yet)"), start) for start in starts]
 
 
 def payroll_button_names(runs: Sequence[str]) -> list[tuple[str, Optional[str]]]:
@@ -466,12 +473,14 @@ def run_window() -> int:
 
         process_in_window(root, source, show_working, finished)
 
-    def from_returned_files(weeks: str, making: str, make: Callable, summary: Callable) -> Callable[[], None]:
-        """A button that reads the supervisors' returned files in a folder, and makes what's sent on from them."""
+    def from_returned_files(chosen: Callable, making: str, make: Callable, summary: Callable) -> Callable[[], None]:
+        """A button that reads the supervisors' returned files for the week or pay period ``chosen`` gives (its text,
+        and its Monday or None for the usual one), and makes what's sent on from them with ``make(folder, start)``."""
 
         def run() -> None:
             nonlocal busy
             busy = True
+            weeks, start = chosen()  # read here, as Tk can't be touched from the background
             folder = None
             if accounting["folder"] is None:
                 try:
@@ -499,9 +508,34 @@ def run_window() -> int:
                 os.startfile(result.folder)
 
             show_working(True)
-            _in_background(root, lambda: make(folder), done)
+            _in_background(root, lambda: make(folder, start), done)
 
         return run
+
+    def show_choices(menu, choices: list[tuple[str, date]], usual: Optional[date], shown: dict) -> None:
+        """Fill a week or pay period list, keeping what was chosen if it's still there, or else the usual one."""
+        before = shown.get(menu.get())
+        shown.clear()
+        shown.update(choices)
+        menu.configure(values=[text for text, _ in choices])
+        dates = [start for _, start in choices]
+        pick = before if before in dates else usual if usual in dates else None
+        menu.set(next((text for text, start in choices if start == pick), ""))
+
+    def chosen_from(menu, shown: dict, fallback: str) -> Callable[[], tuple[str, Optional[date]]]:
+        return lambda: (menu.get() or fallback, shown.get(menu.get()))
+
+    def show_week_lists(pay: Optional[settings.AgencyPay], received: Optional[set[date]]) -> None:
+        """The weeks and pay periods to choose from. Until the settings file is read, only the usual week is listed,
+        and the pay period list is empty, which makes the usual one."""
+        today = date.today()
+        show_choices(week_menu, dated_choices(week_choices(today, received), week_label, 7, today),
+                     week_choices(today, set())[0], weeks_shown)
+        if pay is None:
+            show_choices(period_menu, [], None, periods_shown)
+        else:
+            show_choices(period_menu, dated_choices(period_choices(pay, today, received), period_label, PERIOD_DAYS, today),
+                         pay.period_before(today), periods_shown)
 
     def on_receive() -> None:
         nonlocal busy
@@ -529,6 +563,7 @@ def run_window() -> int:
             if result.received:
                 last_folder["path"] = result.received[0].path.parent
                 open_button.state(["!disabled"])
+                read_payroll_runs()  # a new week may now have files to choose
 
         show_working(True)
         _in_background(root, lambda: receive_files(paths), done)
@@ -578,43 +613,79 @@ def run_window() -> int:
             child.destroy()
         buttons = []
         for column, (text, run) in enumerate(payroll_button_names(runs)):
-            make = (lambda folder, run=run: make_payroll_files(folder, run=run))
+            make = (lambda folder, start, run=run: make_payroll_files(folder, run=run, start=start))
             button = ttk.Button(
                 payroll_frame, text=text,
-                command=from_returned_files("last week", f"{run + ' ' if run else ''}payroll files", make, payroll_summary),
+                command=from_returned_files(
+                    chosen_from(week_menu, weeks_shown, "last week"), f"{run + ' ' if run else ''}payroll files", make,
+                    payroll_summary,
+                ),
             )
             button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
             payroll_frame.columnconfigure(column, weight=1, uniform="payroll")
             if making_reports:
                 button.state(["disabled"])
             buttons.append(button)
-        controls[:] = [process_button, receive_button, *buttons, agency_button, settings_button, accounting_settings_button,
-                       role_menu]
+        controls[:] = [process_button, receive_button, week_menu, *buttons, period_menu, agency_button, settings_button,
+                       accounting_settings_button, role_menu]
 
     def read_payroll_runs() -> None:
-        """Once when the window opens, and when the settings file changes. If it can't be read, the one button
-        stays, and clicking it explains why."""
+        """Once when the window opens, when the settings file changes, and after files are received. If it can't be
+        read, the one button stays, and clicking it explains why."""
 
-        def loaded(current: Optional[settings.Settings], _error) -> None:
-            if current is not None and root.winfo_exists():
+        def load() -> tuple[settings.Settings, Optional[set[date]]]:
+            current = settings.load_full() if settings.accounting_file_path() else settings.load()
+            if current.accounting_folder is None:
+                return current, None  # any week's files could be in the folder chosen, so recent weeks are offered
+            try:
+                return current, received_weeks(current.accounting_folder)
+            except OSError:
+                return current, set()  # making the files will say the folder can't be reached
+
+        def loaded(result, _error) -> None:
+            if result is not None and root.winfo_exists():
+                current, received = result
                 accounting["folder"] = current.accounting_folder
                 show_payroll_buttons(list(current.payroll_runs))
+                show_week_lists(current.agency_pay, received)
 
         if role["now"] == SUPERVISOR:
             return  # a department supervisor's PC has no payroll buttons, and never reads the accounting settings
-        _in_background(root, settings.load_full if settings.accounting_file_path() else settings.load, loaded)
+        _in_background(root, load, loaded)
+
+    def choice_row(parent, text: str):
+        """A labelled list to choose a week or pay period from, above its step's buttons."""
+        row = ttk.Frame(parent)
+        row.grid(row=0, column=0, sticky="w")
+        ttk.Label(row, text=text).pack(side="left", padx=(0, 6))
+        menu = ttk.Combobox(row, state="readonly", width=44)
+        menu.pack(side="left")
+        return menu
 
     process_button = ttk.Button(frame, text="Make this week's reports...", command=on_process)
     receive_button = ttk.Button(frame, text="Receive returned files...", command=on_receive)
-    payroll_frame = ttk.Frame(frame)
+    payroll_step = ttk.Frame(frame)
+    payroll_step.columnconfigure(0, weight=1)
+    week_menu = choice_row(payroll_step, "Week:")
+    weeks_shown: dict[str, date] = {}
+    payroll_frame = ttk.Frame(payroll_step)
+    payroll_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    agency_step = ttk.Frame(frame)
+    agency_step.columnconfigure(0, weight=1)
+    period_menu = choice_row(agency_step, "Pay period:")
+    periods_shown: dict[str, date] = {}
     agency_button = ttk.Button(
-        frame,
+        agency_step,
         text="Make the agency hours...",
-        command=from_returned_files("the last two weeks", "agency hours", make_agency_hours, agency_summary),
+        command=from_returned_files(
+            chosen_from(period_menu, periods_shown, "the last two weeks"), "agency hours",
+            lambda folder, start: make_agency_hours(folder, start=start), agency_summary,
+        ),
     )
+    agency_button.grid(row=1, column=0, sticky="ew", pady=(8, 0))
     steps = {}  # each step's heading and button, by name, shown or hidden by show_role
     for row, (name, widget) in enumerate(
-        (("reports", process_button), ("receive", receive_button), ("payroll", payroll_frame), ("agency", agency_button))
+        (("reports", process_button), ("receive", receive_button), ("payroll", payroll_step), ("agency", agency_step))
     ):
         heading = ttk.Label(frame, style="Heading.TLabel")
         heading.grid(row=2 * row, column=0, sticky="w")
@@ -654,6 +725,7 @@ def run_window() -> int:
     role_menu.pack(side="left")
     controls: list = []  # every button that's disabled while something is being made, kept up to date
     show_payroll_buttons([])
+    show_week_lists(None, set())
     show_role(role["now"])
     read_payroll_runs()
     (process_button if role["now"] != ACCOUNTING else receive_button).focus_set()

@@ -79,10 +79,16 @@ class AgencyPay:
     lunch_per_day: float  # dollars charged for each day with lunch
     period_starts: date  # the Monday one agency pay period starts; each lasts PERIOD_DAYS
 
+    def period_of(self, day: date) -> date:
+        """The Monday starting the pay period that ``day`` falls in."""
+        return self.period_starts + timedelta(days=(day - self.period_starts).days // PERIOD_DAYS * PERIOD_DAYS)
+
     def period_before(self, day: date) -> date:
         """The Monday starting the latest pay period that has ended before ``day``."""
-        current = self.period_starts + timedelta(days=(day - self.period_starts).days // PERIOD_DAYS * PERIOD_DAYS)
-        return current - timedelta(days=PERIOD_DAYS)
+        return self.period_of(day) - timedelta(days=PERIOD_DAYS)
+
+    def is_period_start(self, day: date) -> bool:
+        return self.period_of(day) == day
 
 
 @dataclass(frozen=True)

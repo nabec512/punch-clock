@@ -103,6 +103,21 @@ def latest_receipts(root: Path) -> dict[str, str]:
     return receipts
 
 
+def received_weeks(root: Path) -> set[date]:
+    """The Mondays of the weeks with files received, from the receipt log, for the week list in the window."""
+    weeks = set()
+    try:
+        with open(_receipts_path(root), encoding="utf-8", newline="") as stream:
+            for row in csv.DictReader(stream):
+                try:
+                    weeks.add(date.fromisoformat(row["week"] or ""))
+                except (KeyError, TypeError, ValueError):
+                    continue  # a line it can't read just isn't offered; the files are still checked when read
+    except FileNotFoundError:
+        pass
+    return weeks
+
+
 def _write_receipt(root: Path, row: dict) -> None:
     path = _receipts_path(root)
     new = not path.exists()

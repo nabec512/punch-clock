@@ -17,18 +17,20 @@ import shutil
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from punch_clock import archive, settings
 from punch_clock.agency_workbook import write_agency_workbook
 from punch_clock.approved_hours import ApprovedEmployee, ApprovedFile
 from punch_clock.assignments import safe_file_name
 from punch_clock.jibble_export import UnsupportedExport
+from punch_clock.payroll_files import is_over, not_over_warning
 from punch_clock.returned_files import check_output, day_label, missing_files, new_folder, read_returned_files, shown_path
-from punch_clock.settings import PERIOD_DAYS, Agency, organization_key
+from punch_clock.settings import PERIOD_DAYS, Agency, AgencyPay, organization_key
 
 FOLDER_PREFIX = "Agency hours"
 WEEKS = 2
+RECENT_PERIODS = 4  # the pay periods offered when it can't be known which have files received
 
 
 @dataclass(frozen=True)
@@ -161,8 +163,22 @@ def file_name(report: AgencyReport, reports: list[AgencyReport]) -> str:
     return safe_file_name(f"{report.agency.name}{sender} {report.start} to {report.end}") + ".xlsx"
 
 
-def make_agency_hours(folder: Optional[str | Path] = None, today: Optional[date] = None) -> AgencyResult:
-    """Read the latest pay period that has ended before ``today``, and write each agency's file.
+def period_choices(pay: AgencyPay, today: date, received: Optional[Iterable[date]] = None) -> list[date]:
+    """The pay periods accounting can choose from, newest first: those with files received for either week, or, when
+    that can't be known, the last RECENT_PERIODS. The latest period that has ended is always one, as it's the usual
+    choice, and a period yet to start never is."""
+    latest = pay.period_before(today)
+    if received is None:
+        return [latest + timedelta(days=PERIOD_DAYS * (1 - period)) for period in range(RECENT_PERIODS)]
+    periods = {latest, *(pay.period_of(week) for week in received if week <= today)}
+    return sorted(periods, reverse=True)
+
+
+def make_agency_hours(
+    folder: Optional[str | Path] = None, today: Optional[date] = None, start: Optional[date] = None
+) -> AgencyResult:
+    """Read the pay period starting on ``start``, by default the latest one that has ended before ``today``, and
+    write each agency's file. A period that isn't over yet is read too, with a warning, as its files may change.
 
     With the settings file's accounting folder, the files received there are read and the agency files are made
     there. Otherwise every review file in ``folder`` and below it is read, and they're made in ``folder``.
@@ -172,7 +188,15 @@ def make_agency_hours(folder: Optional[str | Path] = None, today: Optional[date]
         raise UnsupportedExport(
             f"The settings file doesn't list any agencies yet, so there's no one to send hours to:\n\n{current.path}"
         )
-    start = current.agency_pay.period_before(today or date.today())
+    today = today or date.today()
+    if start is None:
+        start = current.agency_pay.period_before(today)
+    elif not current.agency_pay.is_period_start(start):
+        raise UnsupportedExport(
+            f"No agency pay period starts on {start:%A %b} {start.day}. Choose one of the pay periods in the list."
+        )
+    if start > today:
+        raise UnsupportedExport(f"{period_label(start)} hasn't started yet, so there are no hours to send.")
     weeks = tuple(start + timedelta(days=7 * week) for week in range(WEEKS))
     if current.accounting_folder is not None:
         files, skipped = archive.read_archive(current, weeks, period_label(start))
@@ -184,6 +208,8 @@ def make_agency_hours(folder: Optional[str | Path] = None, today: Optional[date]
         files, skipped = read_returned_files(folder, weeks, period_label(start))
     reports, warnings = collect(files, current, start, folder)
     warnings = skipped + warnings
+    if not is_over(start, PERIOD_DAYS, today):
+        warnings.insert(0, not_over_warning(period_label(start)))
     if current.note:
         warnings.insert(0, current.note)
 

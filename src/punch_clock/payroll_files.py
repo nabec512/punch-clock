@@ -1,7 +1,7 @@
 """Each payroll's PowerPay timesheet import file for one week, from the supervisors' returned review files.
 
-Accounting points it at a folder, and every review file in it or below it from the last full week
-is read again. Everyone in those files must be linked to a payroll or an agency in the settings
+Accounting chooses a week, by default the last full week, and every review file received for it
+(or, with no accounting folder, every one in a chosen folder or below it) is read again. Everyone in those files must be linked to a payroll or an agency in the settings
 file. Agency staff are left out, as they're paid every two weeks, and everyone else goes in their
 payroll's file, which can draw on several Jibble organizations.
 
@@ -23,7 +23,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from punch_clock import archive, settings
 from punch_clock.approved_hours import ApprovedFile
@@ -32,6 +32,7 @@ from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.returned_files import check_output, missing_files, new_folder, read_returned_files, shown_path, week_label
 
 FOLDER_PREFIX = "Payroll files"
+RECENT_WEEKS = 8  # the weeks offered when it can't be known which have files received
 # The columns of the import template set up in PowerPay. They must match it exactly.
 # employee_name is left unmatched, so PowerPay ignores it: it's there so accounting can tell who each line is.
 COLUMNS = ("employee_name", "employee_number", "earning_code", "hours", "applicable_period")
@@ -81,6 +82,29 @@ class PayrollResult:
 def last_full_week(today: date) -> date:
     """The Monday of the latest Monday-to-Sunday week that has ended before ``today``."""
     return today - timedelta(days=today.weekday() + 7)
+
+
+def is_over(start: date, days: int, today: date) -> bool:
+    """Whether the ``days`` from ``start`` have all gone by before ``today``."""
+    return today >= start + timedelta(days=days)
+
+
+def week_choices(today: date, received: Optional[Iterable[date]] = None) -> list[date]:
+    """The weeks accounting can choose from, newest first: those with files received, or, when that can't be known,
+    the last RECENT_WEEKS. The last full week is always one, as it's the usual choice, and a week yet to start never is.
+    """
+    this_week = last_full_week(today) + timedelta(days=7)
+    if received is None:
+        return [this_week - timedelta(days=7 * week) for week in range(RECENT_WEEKS)]
+    weeks = {last_full_week(today), *(week for week in received if week.weekday() == 0 and week <= this_week)}
+    return sorted(weeks, reverse=True)
+
+
+def not_over_warning(what: str) -> str:
+    return (
+        f"{what} isn't over yet, so these files only have the hours in the supervisors' files so far. Make them again "
+        "once it's over and the final files are received."
+    )
 
 
 def plain_name(name: str) -> str:
@@ -200,9 +224,11 @@ def _file_name(payroll: str, start: date) -> str:
 
 
 def make_payroll_files(
-    folder: Optional[str | Path] = None, today: Optional[date] = None, run: Optional[str] = None
+    folder: Optional[str | Path] = None, today: Optional[date] = None, run: Optional[str] = None,
+    start: Optional[date] = None,
 ) -> PayrollResult:
-    """Read the last full week before ``today``, and write each payroll's import file.
+    """Read the week starting on the Monday ``start``, by default the last full week before ``today``, and write each
+    payroll's import file. A week that isn't over yet is read too, with a warning, as its files may change.
 
     With the settings file's accounting folder, the files received there are read and the payroll files are made
     there. Otherwise every review file in ``folder`` and below it is read, and they're made in ``folder``.
@@ -218,7 +244,13 @@ def make_payroll_files(
         )
     only = set(current.payroll_runs[run]) if run else None
     others = [o.name for key, o in current.organizations.items() if only is not None and key not in only]
-    start = last_full_week(today or date.today())
+    today = today or date.today()
+    if start is None:
+        start = last_full_week(today)
+    elif start.weekday() != 0:
+        raise UnsupportedExport(f"A week starts on a Monday, and {start:%A %b} {start.day} isn't one.")
+    if start > today:
+        raise UnsupportedExport(f"{week_label(start)} hasn't started yet, so there are no hours to pay.")
     if current.accounting_folder is not None:
         files, skipped = archive.read_archive(current, (start,), week_label(start), only)
         folder, parent = current.accounting_folder / archive.RETURNED, archive.output_parent(current, archive.PAYROLL)
@@ -229,6 +261,8 @@ def make_payroll_files(
         files, skipped = read_returned_files(folder, (start,), week_label(start), only, others)
     by_payroll, warnings = collect(files, current, folder, current.payrolls_in(run))
     warnings = skipped + missing_files(files, current, (start,), only) + warnings
+    if not is_over(start, 7, today):
+        warnings.insert(0, not_over_warning(week_label(start)))
     if current.note:
         warnings.insert(0, current.note)
     paid = {payroll: lines for payroll, lines in by_payroll.items() if any(line.regular or line.overtime for line in lines)}

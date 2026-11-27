@@ -807,8 +807,8 @@ def test_each_role_sees_only_its_steps_numbered_from_one():
     assert app.visible_steps(app.SUPERVISOR) == [("reports", "1. When you have this week's file from Jibble:")]
     assert [text for _, text in app.visible_steps(app.ACCOUNTING)] == [
         "1. When a supervisor sends back their Excel file:",
-        "2. When every supervisor has sent back last week's file:",
-        "3. On agency payday, for the last two weeks:",
+        "2. When every supervisor has sent back the week's file:",
+        "3. On agency payday, for the two-week pay period:",
     ]
     assert [name for name, _ in app.visible_steps(app.BOTH)] == ["reports", "receive", "payroll", "agency"]
 

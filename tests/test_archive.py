@@ -12,7 +12,7 @@ from test_review_flow import Sheet
 from punch_clock import settings
 from punch_clock.agency_hours import make_agency_hours
 from punch_clock.app import receive_summary
-from punch_clock.archive import HISTORY, RECEIPTS, RETURNED, receive_files
+from punch_clock.archive import HISTORY, RECEIPTS, RETURNED, receive_files, received_weeks
 from punch_clock.jibble_export import UnsupportedExport
 from punch_clock.payroll_files import make_payroll_files
 from punch_clock.reports import REVIEW_FOLDER, process_export
@@ -66,6 +66,13 @@ def test_received_files_are_kept_by_organization_and_week_with_a_receipt(setup):
     assert len(rows[0]["sha256"]) == 64 and rows[0]["replaced"] == ""
     assert not result.warnings
     assert receive_summary(result).startswith("Received 3 supervisor files:")
+
+
+def test_the_weeks_with_files_received_are_listed(setup):
+    accounting, returned = setup
+    assert received_weeks(accounting) == set()  # nothing received yet, so no receipt log
+    receive_files(returned, now=NOON)
+    assert received_weeks(accounting) == {WEEK_START}
 
 
 def test_receiving_the_same_file_again_changes_nothing(setup):

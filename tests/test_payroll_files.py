@@ -8,9 +8,10 @@ from sample_export import COMPANY, WEEK_START, Person, build_workbook, organizat
 from test_review_flow import Sheet
 
 from punch_clock import reports, settings
-from punch_clock.app import payroll_button_names, payroll_summary
+from punch_clock.app import dated_choices, payroll_button_names, payroll_summary
 from punch_clock.jibble_export import UnsupportedExport
-from punch_clock.payroll_files import last_full_week, make_payroll_files, plain_name
+from punch_clock.payroll_files import last_full_week, make_payroll_files, plain_name, week_choices
+from punch_clock.returned_files import week_label
 from punch_clock.reports import REVIEW_FOLDER, process_export
 from punch_clock.review_workbook import ADJUSTMENT
 
@@ -161,6 +162,51 @@ def test_the_last_full_week_ends_on_the_sunday_before():
     assert last_full_week(date(2026, 11, 25)) == date(2026, 11, 16)  # a Wednesday
     assert last_full_week(date(2026, 11, 23)) == date(2026, 11, 16)  # the Monday after
     assert last_full_week(date(2026, 11, 22)) == date(2026, 11, 9)  # that Sunday, the week isn't over
+
+
+def test_a_chosen_week_is_read_instead(returned):
+    folder, _ = returned
+    result = make_payroll_files(folder, today=WEEK_START + timedelta(days=30), start=WEEK_START)
+    assert result.start == WEEK_START and len(result.payrolls) == 2
+    assert not any("isn't over yet" in warning for warning in result.warnings)
+
+
+def test_a_week_not_over_yet_can_be_made_with_a_warning(returned):
+    folder, _ = returned
+    result = make_payroll_files(folder, today=WEEK_START + timedelta(days=4), start=WEEK_START)
+    assert result.warnings[0].startswith("Mon Mar 2 to Sun Mar 8, 2026 isn't over yet")
+    assert "isn't over yet" in payroll_summary(result)
+    assert "isn't over yet" in result.summary.read_text(encoding="utf-8")
+    # On the Monday after, it's over.
+    assert not any("isn't over" in w for w in make_payroll_files(folder, today=WEEK_START + timedelta(days=7), start=WEEK_START).warnings)
+
+
+def test_a_chosen_week_must_start_on_a_monday_and_have_started(returned):
+    folder, _ = returned
+    with pytest.raises(UnsupportedExport, match="Tuesday Mar 3 isn't one"):
+        make_payroll_files(folder, today=NEXT_WEDNESDAY, start=WEEK_START + timedelta(days=1))
+    with pytest.raises(UnsupportedExport, match="hasn't started yet"):
+        make_payroll_files(folder, today=NEXT_WEDNESDAY, start=WEEK_START + timedelta(days=14))
+
+
+def test_the_weeks_to_choose_are_those_received_and_the_last_full_week():
+    today = date(2026, 11, 27)  # a Friday
+    received = {date(2026, 11, 23), date(2026, 11, 2), date(2026, 11, 30), date(2026, 11, 4)}
+    # This week, received so far, and the last full week, which has nothing yet. A week yet to start, or a date that
+    # isn't a Monday, isn't offered.
+    assert week_choices(today, received) == [date(2026, 11, 23), date(2026, 11, 16), date(2026, 11, 2)]
+    assert week_choices(today, set()) == [date(2026, 11, 16)]
+    # When it can't be known, the recent weeks, this one first.
+    recent = week_choices(today, None)
+    assert recent[0] == date(2026, 11, 23) and recent[1] == date(2026, 11, 16) and len(recent) == 8
+
+
+def test_the_week_list_says_which_isnt_over():
+    today = date(2026, 11, 27)
+    assert dated_choices(week_choices(today, {date(2026, 11, 23)}), week_label, 7, today) == [
+        ("Mon Nov 23 to Sun Nov 29, 2026 (not over yet)", date(2026, 11, 23)),
+        ("Mon Nov 16 to Sun Nov 22, 2026", date(2026, 11, 16)),
+    ]
 
 
 def test_making_them_again_makes_a_new_folder(returned):

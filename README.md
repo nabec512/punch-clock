@@ -144,13 +144,13 @@ Without `accounting_folder` in the accounting settings file, **Receive returned 
 
 ## Payroll files
 
-Once every supervisor has sent back last week's Excel file, accounting makes one PowerPay import file per payroll.
+Once every supervisor has sent back their Excel file for the week, accounting makes one PowerPay import file per payroll.
 
 Where each company's accounting makes its own payroll files, `payroll_runs` in the accounting settings file gives each one a button, such as **EXAMPLE Payroll Files...**, that reads only its own organizations' files. Without it there's one **Make the payroll files...** button for every organization.
 
 1. Receive every returned Excel file for the week, as above. Corrections made on paper are typed into the Excel file first, and the file is received again.
-2. Choose the payroll button.
-3. Punch Clock reads the files received for the last full week, Monday to Sunday, and writes one `.csv` file per payroll into a new folder under `Payroll files`, with a summary of everyone's hours.
+2. Pick the week under **Week**, then choose the payroll button. The list has every week with files received, newest first, and starts on the last full week, Monday to Sunday, which is the usual one. Pick an earlier week to make its files again, for example after a correction. A week that isn't over yet says so in the list: its files can be made, for a test or to see the hours so far, with a reminder to make them again once it's over.
+3. Punch Clock reads the files received for that week, and writes one `.csv` file per payroll into a new folder under `Payroll files`, with a summary of everyone's hours.
 
    Without an accounting folder, save every returned file for the week in one folder (folders inside it are fine), and pick it when asked. The files are then made in a new `Payroll files` folder there.
 4. In PowerPay, import each file into its payroll's run, with the Employee Timesheet custom import template. **Import first, then key holidays, sick days and vacation:** an import replaces everything already keyed in that run for each person in the file.
@@ -177,8 +177,8 @@ This is done once, under **Company > Custom Import**: choose **Add Template**, p
 Staffing agencies are paid every two weeks, for two full weeks, Monday to Sunday. On the Wednesday after, accounting sends each agency its people's hours.
 
 1. Make sure every supervisor's returned file for both weeks has been received.
-2. Choose **Make the agency hours...**.
-3. Punch Clock reads the files received for the last pay period that has ended, and writes one Excel file per agency into a new folder under `Agency hours`. An agency whose people are sent by two companies gets a file from each.
+2. Pick the pay period under **Pay period**, then choose **Make the agency hours...**. The list has every pay period with files received, and starts on the last one that has ended. Only real pay periods, counted in two weeks from `period_starts`, are listed.
+3. Punch Clock reads the files received for that pay period, and writes one Excel file per agency into a new folder under `Agency hours`. An agency whose people are sent by two companies gets a file from each.
 
    Without an accounting folder, save every returned file for both weeks in one folder (folders inside it are fine), and pick it when asked. The files are then made in a new `Agency hours` folder there.
 4. Check each file. Lunch is charged for each scheduled day worked, at the rate in the settings file. For anyone who didn't buy lunch, change their **Lunch days** under **Detail by week**, or type over their lunch, and the totals follow. Then send it to the agency's email at the top.
@@ -382,7 +382,7 @@ The app reads the settings file each time someone makes reports or payroll or ag
 
 Each Jibble member code has one link, and the app reads the links each time it makes files. So a change applies the next time files are made. Files already made or imported don't change.
 
-The window only makes files for the last full week, Monday to Sunday. Earlier weeks can't be picked. Making the same week again, before the next Monday, creates a new folder ending in `(2)`, and it uses the links as they are at that point.
+The week is picked in the window, and the links are read as they are when the files are made, whichever week it is. So a week made again after a link has changed uses the new link. Making the same week again creates a new folder ending in `(2)`.
 
 **Same organization, new payroll.** Say LEE, AVERY moves from Main Payroll to Second Payroll and keeps the same Jibble code, `AL-1`.
 
